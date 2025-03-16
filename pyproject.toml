@@ -1,0 +1,78 @@
+[project]
+name = "memesearch"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiofiles>=24.1.0",
+    "alembic>=1.15.1",
+    "black==23.7.0",
+    "celery>=5.4.0",
+    "cfgv==3.4.0",
+    "click==8.1.8",
+    "coverage==7.6.12",
+    "distlib==0.3.9",
+    "email-validator>=2.2.0",
+    "fastapi>=0.115.11",
+    "fastapi-pagination>=0.12.34",
+    "filelock==3.18.0",
+    "google-auth>=2.38.0",
+    "identify==2.6.9",
+    "iniconfig==2.0.0",
+    "jinja2>=3.1.6",
+    "moviepy>=2.1.2",
+    "mypy-extensions==1.0.0",
+    "nodeenv==1.9.1",
+    "opencv-python-headless>=4.11.0.86",
+    "packaging==24.2",
+    "passlib[bcrypt]>=1.7.4",
+    "pathspec==0.12.1",
+    "pillow>=10.4.0",
+    "platformdirs==4.3.6",
+    "pluggy==1.5.0",
+    "pre-commit==3.3.3",
+    "psycopg2-binary>=2.9.10",
+    "pydantic>=2.10.6",
+    "pydantic-settings>=2.8.1",
+    "pytest==7.4.0",
+    "pytest-cov==4.1.0",
+    "python-dotenv>=1.0.1",
+    "python-jose[cryptography]>=3.4.0",
+    "python-multipart>=0.0.20",
+    "pyyaml==6.0.2",
+    "redis>=5.2.1",
+    "requests>=2.32.3",
+    "ruff==0.1.7",
+    "sqlalchemy>=2.0.39",
+    "tqdm>=4.67.1",
+    "uvicorn>=0.34.0",
+    "virtualenv==20.29.3",
+]
+
+[tool.ruff]
+select = ["E", "F", "I", "N", "B", "A", "COM", "C4", "RET", "SIM", "ERA"]
+ignore = ["E501"]  # Line length is handled by formatter
+line-length = 100
+target-version = "py310"
+fix = true
+unfixable = ["F401", "F841"]
+
+[tool.ruff.isort]
+known-first-party = ["app"]
+
+[tool.ruff.flake8-quotes]
+docstring-quotes = "double"
+inline-quotes = "single"
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+python_classes = "Test*"

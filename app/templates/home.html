@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Media Search Platform{% endblock %}
+
+{% block content %}
+<div class="bg-white">
+    <!-- Hero section -->
+    <div class="relative bg-indigo-800">
+        <div class="absolute inset-0">
+            <img class="w-full h-full object-cover" src="{{ url_for('static', path='/img/hero-bg.jpg') }}" alt="Media Search Platform">
+            <div class="absolute inset-0 bg-indigo-800 mix-blend-multiply" aria-hidden="true"></div>
+        </div>
+        <div class="relative max-w-7xl mx-auto py-24 px-4 sm:py-32 sm:px-6 lg:px-8">
+            <h1 class="text-4xl font-extrabold tracking-tight text-white sm:text-5xl lg:text-6xl">Media Search Platform</h1>
+            <p class="mt-6 text-xl text-indigo-100 max-w-3xl">
+                Upload, process, and search your media files using AI-powered analysis.
+                Get detailed descriptions, automatically extracted tags, and easily find content
+                when you need it.
+            </p>
+            <div class="mt-10 flex space-x-4">
+                <a href="/api/v1/public/explore" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-indigo-700 bg-white hover:bg-indigo-50">
+                    Explore
+                </a>
+                {% if not user %}
+                <a href="/auth/register" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
+                    Sign up
+                </a>
+                {% else %}
+                <a href="/dashboard" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
+                    Dashboard
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Features section -->
+    <div class="py-16 bg-gray-50 overflow-hidden">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center">
+                <h2 class="text-base font-semibold text-indigo-600 tracking-wide uppercase">Features</h2>
+                <p class="mt-1 text-4xl font-extrabold text-gray-900 sm:text-5xl sm:tracking-tight">Why use our platform?</p>
+                <p class="max-w-xl mt-5 mx-auto text-xl text-gray-500">Discover the power of AI-driven media analysis and search.</p>
+            </div>
+
+            <div class="mt-16">
+                <div class="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
+                    <div class="pt-6">
+                        <div class="flow-root bg-white rounded-lg px-6 pb-8 shadow-lg">
+                            <div class="-mt-6">
+                                <div>
+                                    <span class="inline-flex items-center justify-center p-3 bg-indigo-500 rounded-md shadow-lg">
+                                        <i class="fas fa-image text-white text-xl"></i>
+                                    </span>
+                                </div>
+                                <h3 class="mt-8 text-lg font-medium text-gray-900 tracking-tight">Media Processing</h3>
+                                <p class="mt-5 text-base text-gray-500">
+                                    Automatically convert your images to PNG and videos to MP4 format.
+                                    We'll optimize your media for efficient storage and retrieval.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-6">
+                        <div class="flow-root bg-white rounded-lg px-6 pb-8 shadow-lg">
+                            <div class="-mt-6">
+                                <div>
+                                    <span class="inline-flex items-center justify-center p-3 bg-indigo-500 rounded-md shadow-lg">
+                                        <i class="fas fa-robot text-white text-xl"></i>
+                                    </span>
+                                </div>
+                                <h3 class="mt-8 text-lg font-medium text-gray-900 tracking-tight">AI Analysis</h3>
+                                <p class="mt-5 text-base text-gray-500">
+                                    Our platform uses Google's Gemini API to analyze your media and extract detailed
+                                    descriptions, identify objects, and generate relevant search tags.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-6">
+                        <div class="flow-root bg-white rounded-lg px-6 pb-8 shadow-lg">
+                            <div class="-mt-6">
+                                <div>
+                                    <span class="inline-flex items-center justify-center p-3 bg-indigo-500 rounded-md shadow-lg">
+                                        <i class="fas fa-search text-white text-xl"></i>
+                                    </span>
+                                </div>
+                                <h3 class="mt-8 text-lg font-medium text-gray-900 tracking-tight">Advanced Search</h3>
+                                <p class="mt-5 text-base text-gray-500">
+                                    Find the media you need quickly with our powerful search engine.
+                                    Filter by media type, tags, or use natural language descriptions.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CTA Section -->
+    <div class="bg-indigo-700">
+        <div class="max-w-2xl mx-auto text-center py-16 px-4 sm:py-20 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-extrabold text-white sm:text-4xl">
+                <span class="block">Ready to get started?</span>
+            </h2>
+            <p class="mt-4 text-lg leading-6 text-indigo-200">
+                Join our platform today and experience the power of AI-driven media management.
+            </p>
+            <div class="mt-8 flex justify-center">
+                {% if not user %}
+                <div class="inline-flex rounded-md shadow">
+                    <a href="/auth/register" class="inline-flex items-center justify-center px-5 py-3 border border-transparent text-base font-medium rounded-md text-indigo-600 bg-white hover:bg-indigo-50">
+                        Sign up for free
+                    </a>
+                </div>
+                <div class="ml-3 inline-flex">
+                    <a href="/auth/login" class="inline-flex items-center justify-center px-5 py-3 border border-transparent text-base font-medium rounded-md text-white bg-indigo-500 hover:bg-indigo-600">
+                        Sign in
+                    </a>
+                </div>
+                {% else %}
+                <div class="inline-flex rounded-md shadow">
+                    <a href="/dashboard" class="inline-flex items-center justify-center px-5 py-3 border border-transparent text-base font-medium rounded-md text-indigo-600 bg-white hover:bg-indigo-50">
+                        Go to dashboard
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Placeholder for hero background image */
+    .bg-indigo-800 .absolute.inset-0 img {
+        background-color: #4F46E5;
+        min-height: 400px;
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,21 @@
+# Ruff configuration specific to this project
+select = ["E", "F", "I", "N", "B", "A", "COM", "C4", "RET", "SIM", "ERA"]
+ignore = [
+    "E501",  # Line length is handled by formatter
+    "B008",  # FastAPI's Depends() usage in parameter defaults is intentional
+]
+line-length = 100
+target-version = "py310"
+fix = true
+unsafe-fixes = true
+unfixable = ["F401", "F841"]
+
+[per-file-ignores]
+# SQLAlchemy models commonly use 'id' which shadows a built-in
+"app/models/*.py" = ["A003"]
+# Pydantic schemas also use 'id' field names
+"app/schemas/*.py" = ["A003"]
+# Database base class definition
+"app/db/base_class.py" = ["A003"]
+# Config validators use cls instead of self
+"app/config.py" = ["N805"]
