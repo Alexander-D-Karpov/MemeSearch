@@ -1,0 +1,31 @@
+{{define "content"}}
+{{with .Data}}
+<h1>Edit <a href="/m/{{.ID}}">#{{.ID}}</a></h1>
+<div class="edit-layout">
+  <div class="viewer small">
+    {{if eq .Kind "video"}}
+      <video src="{{.URL}}" controls loop playsinline preload="metadata"></video>
+    {{else}}
+      <img src="{{.URL}}" alt="">
+    {{end}}
+  </div>
+  <form class="panel" id="edit-form" data-id="{{.ID}}">
+    <label>Title <input name="title" value="{{.Title}}"></label>
+    <label>Text on the meme <textarea name="text" rows="5">{{.OCRText}}</textarea></label>
+    <label>Description <textarea name="description" rows="5">{{.Description}}</textarea></label>
+    <label>Speech transcript <textarea name="transcript" rows="3">{{.Transcript}}</textarea></label>
+    <label>Template <input name="template" value="{{.Template}}"></label>
+    <label>Tags (comma separated) <input name="tags" value="{{join .Tags ", "}}"></label>
+    <label>Objects (comma separated) <input name="objects" value="{{join .Objects ", "}}"></label>
+    <label>People / characters (comma separated) <input name="people" value="{{join .People ", "}}"></label>
+    <label class="check"><input type="checkbox" name="nsfw"{{if .NSFW}} checked{{end}}> NSFW</label>
+    <label class="check"><input type="checkbox" name="hidden"{{if .Hidden}} checked{{end}}> Hidden from public</label>
+    <label class="check"><input type="checkbox" name="locked"{{if .Locked}} checked{{end}}> Locked (reprocess keeps these texts, only recomputes vectors)</label>
+    <div class="actions">
+      <button class="btn primary" type="submit">Save</button>
+      <a class="btn" href="/m/{{.ID}}">Cancel</a>
+    </div>
+  </form>
+</div>
+{{end}}
+{{end}}

@@ -1,30 +1,20 @@
-FROM python:3.10-slim
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+COPY db ./db
+COPY web ./web
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/memesearch ./cmd/memesearch
 
-WORKDIR /app
-
-# Install system dependencies for FFmpeg
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    libsm6 \
-    libxext6 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy project files
-COPY . .
-
-# Create media directories if they don't exist
-RUN mkdir -p media/uploads media/processed
-
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Expose ports
-EXPOSE 8000
-
-# Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates tzdata wget \
+    && adduser -D -H -u 10001 app \
+    && mkdir -p /media && chown app:app /media
+COPY --from=build /out/memesearch /usr/local/bin/memesearch
+USER app
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1
+ENTRYPOINT ["memesearch"]

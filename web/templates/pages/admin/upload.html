@@ -1,0 +1,55 @@
+{{define "content"}}
+{{with .Data}}
+<h1>Upload &amp; import</h1>
+
+<section class="panel">
+  <h2>Files</h2>
+  <p class="muted">Images, GIFs and videos, up to {{.MaxFileMB}} MB each. Drop thousands of files or whole folders; uploads run in parallel and duplicates are skipped.</p>
+  <div class="dropzone" id="dropzone" tabindex="0">
+    <p><b>Drop files or folders here</b> or</p>
+    <div class="actions">
+      <label class="btn">Choose files<input type="file" id="pick-files" multiple accept="image/*,video/*,.gif" hidden></label>
+      <label class="btn">Choose folder<input type="file" id="pick-dir" webkitdirectory hidden></label>
+    </div>
+  </div>
+  <label class="check"><input type="checkbox" id="bulk-priority"> Low priority (do not delay bot and single uploads)</label>
+  <div class="progress" id="upload-progress" hidden>
+    <div class="bar"><div id="upload-bar"></div></div>
+    <p id="upload-summary"></p>
+    <button class="btn" id="upload-cancel">Cancel</button>
+  </div>
+  <ul class="upload-log" id="upload-log"></ul>
+</section>
+
+<section class="panel">
+  <h2>ZIP archive</h2>
+  <p class="muted">Upload a .zip up to {{.MaxZipGB}} GB. It is extracted on the server; nested folders are fine.</p>
+  <form id="zip-form">
+    <input type="file" name="file" accept=".zip,application/zip" required>
+    <button class="btn primary">Upload &amp; import</button>
+  </form>
+  <div class="progress" id="zip-progress" hidden>
+    <div class="bar"><div id="zip-bar"></div></div>
+    <p id="zip-summary"></p>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Server inbox</h2>
+  <p class="muted">Copy files straight to <code>{{.InboxPath}}</code> on the server (for example from the external drive), then import. Imported files are moved out of the inbox.</p>
+  <button class="btn" data-api="POST /api/v1/admin/import/inbox" data-reload>Import inbox</button>
+</section>
+
+<section class="panel">
+  <h2>Import jobs</h2>
+  <table id="imports" data-poll="/api/v1/admin/imports">
+    <thead><tr><th>#</th><th>Kind</th><th>Name</th><th>Status</th><th>Total</th><th>Added</th><th>Dup</th><th>Skipped</th><th>Failed</th><th>Error</th></tr></thead>
+    <tbody>
+    {{range .Imports}}
+    <tr><td>{{.ID}}</td><td>{{.Kind}}</td><td>{{.Name}}</td><td class="status-{{.Status}}">{{.Status}}</td><td>{{.Total}}</td><td>{{.Added}}</td><td>{{.Duplicates}}</td><td>{{.Skipped}}</td><td>{{.Failed}}</td><td class="error small">{{.Error}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
+{{end}}

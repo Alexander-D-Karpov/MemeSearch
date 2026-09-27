@@ -59,3 +59,7 @@ htmlcov/
 
 # Google credentials
 service_account_key.json
+
+# MemeSearch runtime data
+data/
+/memesearch

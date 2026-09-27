@@ -1,0 +1,10 @@
+.git
+.idea
+.vscode
+data
+worker
+app
+media
+migrations
+*.md
+.env
