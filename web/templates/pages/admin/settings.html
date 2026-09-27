@@ -1,0 +1,26 @@
+{{define "content"}}
+{{with .Data}}
+<h1>Settings</h1>
+<form class="panel" id="settings-form">
+  <h2>Analysis</h2>
+  <label class="check"><input type="checkbox" name="codex_enabled"{{if .CodexEnabled}} checked{{end}}> Use Codex (subscription sessions)</label>
+  <label class="check"><input type="checkbox" name="fallback_enabled"{{if .FallbackEnabled}} checked{{end}}> Use the fallback API when Codex is unavailable, limited or failing</label>
+  <label class="check"><input type="checkbox" name="transcribe"{{if .Transcribe}} checked{{end}}> Transcribe speech in videos (Whisper)</label>
+  <label>Codex model (empty = subscription default) <input name="codex_model" value="{{.CodexModel}}" placeholder="e.g. gpt-5.5"></label>
+  <label>Codex reasoning effort
+    <select name="codex_effort">
+      <option value=""{{if eq .CodexEffort ""}} selected{{end}}>default from env</option>
+      <option value="minimal"{{if eq .CodexEffort "minimal"}} selected{{end}}>minimal</option>
+      <option value="low"{{if eq .CodexEffort "low"}} selected{{end}}>low</option>
+      <option value="medium"{{if eq .CodexEffort "medium"}} selected{{end}}>medium</option>
+      <option value="high"{{if eq .CodexEffort "high"}} selected{{end}}>high</option>
+    </select>
+  </label>
+  <label>Fallback model (empty = FALLBACK_MODEL from env) <input name="fallback_model" value="{{.FallbackModel}}"></label>
+  <label>Extra instructions appended to the analysis prompt
+    <textarea name="prompt_extra" rows="8" placeholder="e.g. Most memes are from Russian-speaking internet; name the original movie/series when you recognise a frame.">{{.PromptExtra}}</textarea>
+  </label>
+  <div class="actions"><button class="btn primary">Save</button></div>
+</form>
+{{end}}
+{{end}}

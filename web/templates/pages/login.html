@@ -1,0 +1,10 @@
+{{define "content"}}
+<form class="panel narrow" method="post" action="/login">
+  <h1>Admin login</h1>
+  {{with .Data.Error}}<p class="error">{{.}}</p>{{end}}
+  <input type="hidden" name="next" value="{{.Data.Next}}">
+  <label>Username <input name="username" autocomplete="username" required></label>
+  <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+  <button class="btn primary" type="submit">Log in</button>
+</form>
+{{end}}

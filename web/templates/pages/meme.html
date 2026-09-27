@@ -1,0 +1,81 @@
+{{define "content"}}
+{{$m := .Data.Meme}}
+{{$admin := .Admin}}
+<article class="meme" data-id="{{$m.ID}}">
+  <div class="viewer">
+    {{if eq $m.Kind "video"}}
+      <video src="{{$m.URL}}" {{if $m.ThumbURL}}poster="{{$m.ThumbURL}}"{{end}} controls loop playsinline preload="metadata"></video>
+    {{else}}
+      <img src="{{$m.URL}}" alt="{{$m.Title}}"{{if and $m.Width $m.Height}} width="{{$m.Width}}" height="{{$m.Height}}"{{end}}>
+    {{end}}
+  </div>
+  <div class="info">
+    <h1>{{if $m.Title}}{{$m.Title}}{{else}}Meme #{{$m.ID}}{{end}}</h1>
+    <div class="actions">
+      <a class="btn" href="{{$m.URL}}" download>Download</a>
+      <button class="btn" data-copy="{{$m.URL}}">Copy media link</button>
+      <button class="btn" data-copy-page>Copy page link</button>
+    </div>
+    {{if $admin}}
+    <div class="actions admin-actions">
+      <a class="btn" href="/admin/m/{{$m.ID}}/edit">Edit</a>
+      <button class="btn" data-api="POST /api/v1/admin/memes/{{$m.ID}}/reprocess" data-reload>Reprocess</button>
+      <button class="btn" data-api="POST /api/v1/admin/memes/{{$m.ID}}/reprocess?mode=embed">Re-embed</button>
+      {{if $m.Hidden}}
+        <button class="btn" data-api="PATCH /api/v1/admin/memes/{{$m.ID}}" data-body='{"hidden":false}' data-reload>Unhide</button>
+      {{else}}
+        <button class="btn" data-api="PATCH /api/v1/admin/memes/{{$m.ID}}" data-body='{"hidden":true}' data-reload>Hide</button>
+      {{end}}
+      <button class="btn danger" data-api="DELETE /api/v1/admin/memes/{{$m.ID}}" data-confirm="Delete this meme and its files?" data-redirect="/admin/memes">Delete</button>
+    </div>
+    <p class="muted small">
+      status <b class="status-{{$m.Status}}">{{$m.Status}}</b>
+      {{if $m.Provider}}· {{$m.Provider}}{{if $m.Model}} ({{$m.Model}}){{end}}{{end}}
+      · attempts {{$m.Attempts}} {{if $m.Locked}}· locked (manual edits){{end}}
+      {{if $m.Error}}<br><span class="error">{{$m.Error}}</span>{{end}}
+    </p>
+    {{end}}
+
+    {{if $m.OCRText}}
+    <section>
+      <h2>Text</h2>
+      <blockquote class="ocr">{{range lines $m.OCRText}}{{.}}<br>{{end}}</blockquote>
+    </section>
+    {{end}}
+    {{if $m.Description}}
+    <section>
+      <h2>Description</h2>
+      <p>{{$m.Description}}</p>
+    </section>
+    {{end}}
+    {{if $m.Transcript}}
+    <section>
+      <h2>Speech</h2>
+      <p class="transcript">{{$m.Transcript}}</p>
+    </section>
+    {{end}}
+    {{if $m.Template}}<p><b>Template:</b> <a href="/?q={{q $m.Template}}">{{$m.Template}}</a></p>{{end}}
+    {{if $m.People}}
+    <p><b>Who:</b> {{range $m.People}}<a class="chip" href="/?q={{q .}}">{{.}}</a>{{end}}</p>
+    {{end}}
+    {{if $m.Objects}}
+    <p><b>Objects:</b> {{range $m.Objects}}<a class="chip" href="/?q={{q .}}">{{.}}</a>{{end}}</p>
+    {{end}}
+    {{if $m.Tags}}
+    <p class="tags">{{range $m.Tags}}<a class="chip" href="/?q={{q .}}">#{{.}}</a>{{end}}</p>
+    {{end}}
+    <p class="muted small">
+      {{$m.Kind}} · {{$m.Width}}×{{$m.Height}}{{if $m.DurationMs}} · {{dur $m.DurationMs}}{{end}} · {{bytes $m.SizeBytes}}
+      {{if $m.Mood}}· mood: {{$m.Mood}}{{end}}{{if $m.Lang}} · {{$m.Lang}}{{end}}
+      · added <time datetime="{{datetime $m.CreatedAt}}">{{ago $m.CreatedAt}}</time>
+    </p>
+  </div>
+</article>
+
+{{if .Data.Similar}}
+<section class="similar">
+  <h2>Similar memes</h2>
+  {{template "grid" .Data.Similar}}
+</section>
+{{end}}
+{{end}}

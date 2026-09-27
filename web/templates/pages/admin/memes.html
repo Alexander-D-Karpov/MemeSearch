@@ -1,0 +1,32 @@
+{{define "content"}}
+{{with .Data}}
+<h1>Memes</h1>
+<div class="filters">
+  <a class="chip{{if eq .Status ""}} active{{end}}" href="/admin/memes">all</a>
+  <a class="chip{{if eq .Status "pending"}} active{{end}}" href="/admin/memes?status=pending">pending</a>
+  <a class="chip{{if eq .Status "processing"}} active{{end}}" href="/admin/memes?status=processing">processing</a>
+  <a class="chip{{if eq .Status "done"}} active{{end}}" href="/admin/memes?status=done">done</a>
+  <a class="chip{{if eq .Status "failed"}} active{{end}}" href="/admin/memes?status=failed">failed</a>
+  <a class="chip{{if eq .Status "hidden"}} active{{end}}" href="/admin/memes?status=hidden">hidden</a>
+</div>
+<div class="bulkbar" id="bulkbar">
+  <label class="check"><input type="checkbox" id="select-all"> Select all</label>
+  <span id="selected-count">0 selected</span>
+  <button class="btn" data-bulk="reprocess">Reprocess</button>
+  <button class="btn" data-bulk="embed">Re-embed</button>
+  <button class="btn" data-bulk="hide">Hide</button>
+  <button class="btn" data-bulk="unhide">Unhide</button>
+  <button class="btn danger" data-bulk="delete">Delete</button>
+</div>
+<div class="grid selectable">
+  {{range .Memes}}
+  <div class="pick">
+    <input type="checkbox" class="sel" value="{{.ID}}" aria-label="select #{{.ID}}">
+    {{template "card" .}}
+    {{if .Error}}<p class="error small" title="{{.Error}}">{{truncate 80 .Error}}</p>{{end}}
+  </div>
+  {{end}}
+</div>
+{{if .NextBefore}}<p><a class="btn" href="/admin/memes?status={{.Status}}&kind={{.Kind}}&before={{.NextBefore}}">Next page →</a></p>{{end}}
+{{end}}
+{{end}}

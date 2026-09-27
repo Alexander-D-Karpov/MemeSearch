@@ -1,0 +1,17 @@
+{{define "content"}}
+{{with .Data}}
+<div class="meta-line" id="meta">
+  {{if .Query}}
+    {{.Total}} result{{if ne .Total 1}}s{{end}} for “{{.Query}}” · {{.TookMs}} ms{{if not .Semantic}} · text only{{end}}
+  {{else}}
+    Latest memes
+  {{end}}
+</div>
+<div class="grid" id="results">
+  {{template "results" .}}
+</div>
+{{if and .Query (not .Memes)}}
+<p class="empty">Nothing found. Try other words, another language, or describe what is in the picture.</p>
+{{end}}
+{{end}}
+{{end}}

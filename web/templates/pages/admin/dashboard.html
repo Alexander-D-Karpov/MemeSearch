@@ -1,0 +1,75 @@
+{{define "content"}}
+{{with .Data}}
+<h1>Dashboard</h1>
+<div class="stats">
+  <div class="stat"><b>{{.Stats.Total}}</b><span>memes</span></div>
+  <div class="stat"><b>{{index .Stats.ByStatus "done"}}</b><span>done</span></div>
+  <div class="stat"><b>{{index .Stats.ByStatus "pending"}}</b><span>pending</span></div>
+  <div class="stat"><b>{{index .Stats.ByStatus "processing"}}</b><span>processing</span></div>
+  <div class="stat"><a href="/admin/memes?status=failed"><b class="status-failed">{{index .Stats.ByStatus "failed"}}</b></a><span>failed</span></div>
+  <div class="stat"><b>{{bytes .Stats.Bytes}}</b><span>stored</span></div>
+</div>
+<div class="stats">
+  <div class="stat"><b>{{.Queue.High}}</b><span>queue high</span></div>
+  <div class="stat"><b>{{.Queue.Low}}</b><span>queue bulk</span></div>
+  <div class="stat"><b>{{.Queue.Pending}}</b><span>in flight</span></div>
+  <div class="stat"><b>{{.Queue.Delayed}}</b><span>delayed retry</span></div>
+  {{range $k, $v := .Stats.ByProvider}}<div class="stat"><b>{{$v}}</b><span>by {{$k}}</span></div>{{end}}
+</div>
+
+<section class="panel">
+  <h2>Reprocess</h2>
+  <div class="actions">
+    <button class="btn" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"failed"}' data-confirm="Re-analyze all failed memes?">Retry failed</button>
+    <button class="btn" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"stuck"}'>Requeue stuck</button>
+    <button class="btn" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"done","mode":"embed"}' data-confirm="Recompute vectors for all processed memes (no Codex calls)?">Re-embed all</button>
+    <button class="btn danger" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"all"}' data-confirm="Re-analyze EVERY meme with Codex? This uses a lot of quota.">Re-analyze everything</button>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Codex sessions</h2>
+  {{if .Codex}}
+  <table>
+    <tr><th>Name</th><th>Status</th><th>Account</th><th>OK / Fail</th><th>Last used</th></tr>
+    {{range .Codex}}
+    <tr>
+      <td>{{.Name}}{{if not .Enabled}} <span class="muted">(disabled)</span>{{end}}</td>
+      <td class="status-{{.Status}}">{{.Status}}{{if .CoolingDown}} until {{ago .CooldownUntil}}{{end}}</td>
+      <td>{{.Email}} {{.Plan}}</td>
+      <td>{{.OKCount}} / {{.FailCount}}</td>
+      <td>{{ago .LastUsedAt}}</td>
+    </tr>
+    {{end}}
+  </table>
+  {{else}}
+  <p>No Codex sessions yet. <a href="/admin/codex">Add one</a>, or analysis will use the fallback API only.</p>
+  {{end}}
+</section>
+
+{{if .Imports}}
+<section class="panel">
+  <h2>Recent imports</h2>
+  <table>
+    <tr><th>#</th><th>Name</th><th>Status</th><th>Total</th><th>Added</th><th>Dup</th><th>Skipped</th><th>Failed</th></tr>
+    {{range .Imports}}
+    <tr><td>{{.ID}}</td><td>{{.Name}}</td><td class="status-{{.Status}}">{{.Status}}</td><td>{{.Total}}</td><td>{{.Added}}</td><td>{{.Duplicates}}</td><td>{{.Skipped}}</td><td>{{.Failed}}</td></tr>
+    {{end}}
+  </table>
+</section>
+{{end}}
+
+{{if .Failures}}
+<section class="panel">
+  <h2>Recent failures</h2>
+  <table>
+    {{range .Failures}}
+    <tr><td><a href="/m/{{.ID}}">#{{.ID}}</a></td><td>{{.OriginalName}}</td><td class="error small">{{truncate 200 .Error}}</td><td>{{ago .UpdatedAt}}</td></tr>
+    {{end}}
+  </table>
+</section>
+{{end}}
+
+<p class="muted small">ML service: <code>{{.ML}}</code></p>
+{{end}}
+{{end}}

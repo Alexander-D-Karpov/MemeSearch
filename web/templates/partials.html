@@ -1,0 +1,23 @@
+{{define "card"}}
+<a class="card" href="/m/{{.ID}}" data-id="{{.ID}}" title="{{.Title}}">
+  {{if .ThumbURL}}
+    <img src="{{.ThumbURL}}" alt="{{truncate 140 .Title}}" loading="lazy" decoding="async"{{if and .Width .Height}} width="{{.Width}}" height="{{.Height}}"{{end}}>
+  {{else}}
+    <div class="noimg">{{.Kind}}</div>
+  {{end}}
+  {{if ne .Kind "image"}}<span class="badge">{{if eq .Kind "video"}}▶ {{dur .DurationMs}}{{else}}GIF{{end}}</span>{{end}}
+  {{if ne .Status "done"}}<span class="badge status-{{.Status}}">{{.Status}}</span>{{end}}
+  {{if .Hidden}}<span class="badge status-failed">hidden</span>{{end}}
+  <span class="cap">{{truncate 90 .Title}}</span>
+</a>
+{{end}}
+
+{{define "grid"}}
+<div class="grid">{{range .}}{{template "card" .}}{{end}}</div>
+{{end}}
+
+{{define "results"}}
+{{range .Memes}}{{template "card" .}}{{end}}
+{{if .NextOffset}}<div class="more" data-next="/partials/results?q={{q .Query}}&kind={{.Kind}}&offset={{.NextOffset}}"></div>{{end}}
+{{if .NextBefore}}<div class="more" data-next="/partials/results?kind={{.Kind}}&before={{.NextBefore}}"></div>{{end}}
+{{end}}
