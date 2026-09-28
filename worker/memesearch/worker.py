@@ -60,6 +60,7 @@ class Worker:
         self.changed = asyncio.Condition()
 
     async def handle(self, msg: Message) -> None:
+        requeue = False
         try:
             kind = msg.job.get("type")
             if kind == "process":
@@ -70,11 +71,16 @@ class Worker:
                 await self.channels.run(int(msg.job["id"]), float(msg.job.get("at") or 0))
             else:
                 log.warning("unknown job %s", msg.job)
+        except asyncio.CancelledError:
+            requeue = True
+            raise
         except Exception:
             log.exception("job %s crashed", msg.job)
             if msg.job.get("type") == "process":
                 await self.queue.delay(msg.job, 300)
         finally:
+            if requeue:
+                await self.queue.push(msg.stream, msg.job)
             await self.queue.ack(msg)
             async with self.changed:
                 self.active -= 1
@@ -106,7 +112,7 @@ class Worker:
         while not self.stop.is_set():
             try:
                 await self.queue.promote_due()
-                if tick % 60 == 0:
+                if tick % 60 == 59:
                     await self.recover()
                 if tick % 12 == 0:
                     await self.poll_channels()
@@ -120,16 +126,17 @@ class Worker:
             except asyncio.TimeoutError:
                 pass
 
-    async def recover(self) -> None:
+    async def recover(self, startup: bool = False) -> None:
         idle_ms = (self.s.job_timeout_seconds + 300) * 1000
         claimed = await self.queue.reclaim(self.consumer, idle_ms)
         for msg in claimed:
             self.spawn(msg)
         stale = await self.pool.fetch(
             """SELECT id FROM memes WHERE
-            (status='processing' AND updated_at < now() - make_interval(secs => $1))
+            (status='processing' AND ($2 OR updated_at < now() - make_interval(secs => $1)))
             OR (status='pending' AND updated_at < now() - interval '6 hours')""",
             self.s.job_timeout_seconds * 2,
+            startup,
         )
         orphans = await self._unlocked([r["id"] for r in stale], "ms:lock:meme:")
         if orphans:
@@ -179,13 +186,22 @@ class Worker:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self.stop.set)
         log.info("worker %s started, concurrency=%d", self.consumer, self.s.worker_concurrency)
+        try:
+            await self.recover(startup=True)
+        except Exception as exc:
+            log.warning("startup recovery: %s", exc)
         maint = asyncio.create_task(self.maintenance())
         consumer = asyncio.create_task(self.consume())
         await self.stop.wait()
         consumer.cancel()
         log.info("draining %d jobs", len(self.tasks))
         if self.tasks:
-            await asyncio.wait(self.tasks, timeout=60)
+            await asyncio.wait(self.tasks, timeout=self.s.shutdown_drain_seconds)
+        if self.tasks:
+            log.info("requeueing %d unfinished jobs", len(self.tasks))
+            for task in self.tasks:
+                task.cancel()
+            await asyncio.wait(self.tasks, timeout=10)
         maint.cancel()
         await self.pool.close()
         await self.redis.aclose()

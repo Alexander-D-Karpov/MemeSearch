@@ -128,6 +128,14 @@ class Pipeline:
         try:
             async with asyncio.timeout(self.s.job_timeout_seconds):
                 await self._run(meme, full, workdir)
+        except asyncio.CancelledError:
+            await self.pool.execute(
+                """UPDATE memes SET status=CASE WHEN status='processing' THEN 'pending' ELSE status END,
+                attempts=GREATEST(0, attempts - $2::int), updated_at=now() WHERE id=$1""",
+                meme_id,
+                1 if full else 0,
+            )
+            raise
         except EmbedPending as exc:
             await self._fail_or_retry(meme_id, {**job, "analyze": False}, str(exc), 30, False, full)
         except TimeoutError:

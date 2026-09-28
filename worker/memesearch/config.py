@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     worker_concurrency: int = 4
     max_attempts: int = 3
     job_timeout_seconds: int = 900
+    shutdown_drain_seconds: int = 15
     max_file_mb: int = 512
 
     codex_model: str | None = None

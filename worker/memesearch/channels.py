@@ -213,6 +213,10 @@ class ChannelImporter:
                 self.s.channel_poll_minutes,
             )
             log.info("channel @%s: +%d, %d duplicates, %d skipped", ch["username"], c.added, c.duplicates, c.skipped)
+        except asyncio.CancelledError:
+            await self._progress(cid, c, 0)
+            await self.pool.execute("UPDATE channels SET status='pending', next_poll_at=now() WHERE id=$1", cid)
+            raise
         except Exception as exc:
             log.warning("channel @%s failed: %s", ch["username"], exc)
             await self.pool.execute(
