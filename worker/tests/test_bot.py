@@ -58,3 +58,16 @@ def test_cached_file_ids_win_over_links():
     assert isinstance(inline_result(meme(kind="gif"), "CgAC", "gif"), InlineQueryResultCachedGif)
     v = inline_result(meme(kind="video", mime="video/webm", size_bytes=40 << 20), "BAAC", "video")
     assert isinstance(v, InlineQueryResultCachedVideo) and v.video_file_id == "BAAC"
+
+
+def test_every_result_links_to_the_meme_page():
+    results = [
+        inline_result(meme()),
+        inline_result(meme(kind="gif", ext="gif", mime="image/gif")),
+        inline_result(meme(kind="video", ext="mp4", mime="video/mp4")),
+        inline_result(meme(), "AgAC", "photo"),
+        inline_result(meme(kind="video"), "BAAC", "video"),
+    ]
+    for r in results:
+        button = r.reply_markup.inline_keyboard[0][0]
+        assert button.url == "https://ms.example/m/5" and button.text == "ms.example/m/5"

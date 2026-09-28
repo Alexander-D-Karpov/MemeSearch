@@ -44,7 +44,7 @@ jobs:
           cache-dependency-path: worker/requirements.txt
       - name: Install dependencies without the ML stack
         run: |
-          grep -vE '^(torch|transformers|sentence-transformers|faster-whisper)' requirements.txt > /tmp/requirements-ci.txt
+          grep -vE '^(torch|transformers|sentence-transformers)' requirements.txt > /tmp/requirements-ci.txt
           pip install -r /tmp/requirements-ci.txt pytest==9.1.1 ruff==0.16.9
       - run: ruff check memesearch tests
       - run: ruff format --check memesearch tests

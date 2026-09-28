@@ -17,6 +17,8 @@ from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, Telegra
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     InlineQuery,
     InlineQueryResultCachedGif,
     InlineQueryResultCachedPhoto,
@@ -158,16 +160,23 @@ async def cmd_search(message: Message, command: CommandObject) -> None:
     await message.answer("\n".join(lines), disable_web_page_preview=True)
 
 
+def link_markup(meme_id: int) -> InlineKeyboardMarkup:
+    url = meme_url(meme_id)
+    label = url.split("://", 1)[-1]
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=label, url=url)]])
+
+
 def cached_result(m: dict, file_id: str, file_type: str):
     rid = str(m["id"])
+    kb = link_markup(m["id"])
     title = (m.get("title") or "").strip() or f"Meme #{m['id']}"
     desc = ((m.get("text") or m.get("description") or "").strip().replace("\n", " "))[:200]
     if file_type == "photo":
-        return InlineQueryResultCachedPhoto(id=rid, photo_file_id=file_id, title=title, description=desc)
+        return InlineQueryResultCachedPhoto(id=rid, photo_file_id=file_id, title=title, description=desc, reply_markup=kb)
     if file_type == "gif":
-        return InlineQueryResultCachedGif(id=rid, gif_file_id=file_id, title=title)
+        return InlineQueryResultCachedGif(id=rid, gif_file_id=file_id, title=title, reply_markup=kb)
     if file_type == "video":
-        return InlineQueryResultCachedVideo(id=rid, video_file_id=file_id, title=title, description=desc)
+        return InlineQueryResultCachedVideo(id=rid, video_file_id=file_id, title=title, description=desc, reply_markup=kb)
     return None
 
 
@@ -190,6 +199,7 @@ def inline_result(m: dict, file_id: str = "", file_type: str = ""):
     w, h = m.get("width") or None, m.get("height") or None
     seconds = max(1, round((m.get("duration_ms") or 0) / 1000)) if m.get("duration_ms") else None
     rid = str(m["id"])
+    kb = link_markup(m["id"])
     if m["kind"] == "image":
         direct = m.get("ext") in ("jpg", "jpeg") and 0 < size <= PHOTO_URL_MAX
         photo = url if direct else f"{page}/photo.jpg"
@@ -201,6 +211,7 @@ def inline_result(m: dict, file_id: str = "", file_type: str = ""):
             photo_height=h,
             title=title,
             description=desc,
+            reply_markup=kb,
         )
     if m["kind"] == "gif" and 0 < size <= FILE_URL_MAX and thumb:
         return InlineQueryResultGif(
@@ -212,6 +223,7 @@ def inline_result(m: dict, file_id: str = "", file_type: str = ""):
             thumbnail_url=thumb,
             thumbnail_mime_type="image/jpeg",
             title=title,
+            reply_markup=kb,
         )
     if m["kind"] == "video" and m.get("mime") == "video/mp4" and 0 < size <= FILE_URL_MAX and thumb:
         return InlineQueryResultVideo(
@@ -224,6 +236,7 @@ def inline_result(m: dict, file_id: str = "", file_type: str = ""):
             video_width=w,
             video_height=h,
             video_duration=seconds,
+            reply_markup=kb,
         )
     return None
 

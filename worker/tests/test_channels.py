@@ -1,10 +1,16 @@
+import asyncio
+import io
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from PIL import Image, ImageDraw
 
-from memesearch.channels import has_preview, parse_duration, parse_page
+from memesearch.channels import ChannelImporter, has_preview, parse_duration, parse_page
+from memesearch.config import Settings
 from memesearch.media import content_hash, dhash, hamming, poster_time, thumb_hash, video_times
+from memesearch.storage import Storage
 
 PAGE = """
 <html><head><meta property="og:title" content="Best Memes"></head><body>
@@ -121,3 +127,28 @@ def test_poster_time_matches_video_frames():
     assert poster_time(2.0, 8) == video_times(2.0, 8)[0]
     times = video_times(30.0, 8)
     assert len(times) == 8 and poster_time(30.0, 8) == times[1]
+
+
+def test_download_retries_transient_cdn_errors(tmp_path: Path):
+    buf = io.BytesIO()
+    _meme("x").save(buf, "JPEG")
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        if len(calls) < 3:
+            return httpx.Response(500)
+        return httpx.Response(200, content=buf.getvalue())
+
+    async def run():
+        s = Settings(database_url="postgresql://x", internal_token="x", upload_dir=tmp_path)
+        imp = ChannelImporter.__new__(ChannelImporter)
+        imp.s, imp.max_bytes = s, 10 << 20
+        imp.storage = Storage(tmp_path, None, None, 10 << 20)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with patch("memesearch.channels.asyncio.sleep", new=AsyncMock()):
+                return await imp._download_url(client, "https://cdn.example/a.jpg")
+
+    staged = asyncio.run(run())
+    assert len(calls) == 3
+    assert staged.media.ext == "jpg" and staged.size == len(buf.getvalue())

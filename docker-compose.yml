@@ -81,6 +81,7 @@ services:
   worker:
     <<: *python
     command: ["python", "-m", "memesearch.worker"]
+    stop_grace_period: 45s
     mem_limit: ${WORKER_MEM_LIMIT:-6g}
     pids_limit: 1024
 

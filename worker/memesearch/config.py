@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     worker_concurrency: int = 4
     max_attempts: int = 3
     job_timeout_seconds: int = 900
+    shutdown_drain_seconds: int = 15
     max_file_mb: int = 512
 
     codex_model: str | None = None
@@ -59,10 +60,10 @@ class Settings(BaseSettings):
     whisper_threads: int = 4
     max_transcribe_seconds: int = 600
 
-    max_video_frames: int = 8
-    max_gif_frames: int = 6
-    analysis_max_side: int = 1600
-    frame_max_side: int = 1024
+    max_video_frames: int = 5
+    max_gif_frames: int = 4
+    analysis_max_side: int = 1280
+    frame_max_side: int = 768
     thumb_size: int = 480
 
     telegram_bot_token: str | None = None

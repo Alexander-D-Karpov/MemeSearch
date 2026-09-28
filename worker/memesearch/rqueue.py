@@ -11,6 +11,7 @@ from redis.exceptions import ResponseError
 STREAM_HIGH = "ms:q:high"
 STREAM_LOW = "ms:q:low"
 DELAYED = "ms:q:delayed"
+WAIT_CODEX = "ms:q:wait:codex"
 INDEX_VERSION = "ms:index:ver"
 EVENTS = "ms:events"
 GROUP = "workers"
@@ -59,8 +60,23 @@ class JobQueue:
         job = {**job, "nonce": time.time_ns()}
         await self.r.zadd(DELAYED, {json.dumps(job): time.time() + seconds})
 
+    async def wait_codex(self, job: dict[str, Any], seconds: float) -> None:
+        job = {**job, "nonce": time.time_ns()}
+        await self.r.zadd(WAIT_CODEX, {json.dumps(job): time.time() + seconds})
+
     async def promote_due(self) -> int:
-        return int(await self._promote(keys=[DELAYED, STREAM_LOW], args=[time.time()]))
+        now = time.time()
+        n = int(await self._promote(keys=[DELAYED, STREAM_LOW], args=[now]))
+        return n + int(await self._promote(keys=[WAIT_CODEX, STREAM_LOW], args=[now]))
+
+    async def codex_waiting(self) -> int:
+        return int(await self.r.zcard(WAIT_CODEX))
+
+    async def release_codex_waiters(self) -> int:
+        total = 0
+        while n := int(await self._promote(keys=[WAIT_CODEX, STREAM_LOW], args=["+inf"])):
+            total += n
+        return total
 
     @staticmethod
     def _parse(stream: str, entries: list) -> list[Message]:
