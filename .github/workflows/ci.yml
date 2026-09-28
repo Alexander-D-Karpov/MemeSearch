@@ -94,7 +94,7 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       WEB_ADDR: 127.0.0.1:8080
       PUBLIC_URL: http://127.0.0.1:8080
-      UPLOAD_DIR: ${{ runner.temp }}/media
+      UPLOAD_DIR: /tmp/memesearch-media
       SERVE_MEDIA: "true"
       COOKIE_SECURE: "false"
       ADMIN_PASSWORD: ci-password
