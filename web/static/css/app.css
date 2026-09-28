@@ -222,15 +222,20 @@ label.check { flex-direction: row !important; align-items: center; gap: 8px; fon
 .empty { color: var(--muted); padding: 48px 0; text-align: center; }
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-auto-rows: 4px;
+  column-gap: 16px;
+  row-gap: 0;
+  align-items: start;
 }
+.grid > * { grid-row-end: span 70; margin-bottom: 20px; min-width: 0; }
+.grid > .more, .grid > .empty { grid-column: 1 / -1; grid-row-end: span 1; margin: 0; }
 .card { display: flex; flex-direction: column; gap: 8px; color: var(--text); min-width: 0; }
 .card:hover { text-decoration: none; }
 .card-media {
   position: relative;
   display: block;
-  aspect-ratio: 1 / 1;
+  width: 100%;
   max-width: 100%;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -238,7 +243,7 @@ label.check { flex-direction: row !important; align-items: center; gap: 8px; fon
   overflow: hidden;
 }
 .card:hover .card-media { border-color: var(--text); }
-.card-media img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.card-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .noimg { display: grid; place-items: center; width: 100%; height: 100%; min-height: 160px; padding: 12px; text-align: center; color: var(--muted); font: 0.8rem/1.4 var(--mono); }
 .card-status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-tags { position: absolute; top: 8px; left: 8px; display: flex; gap: 4px; flex-wrap: wrap; }
@@ -438,6 +443,7 @@ tr:last-child td { border-bottom: 0; }
   .page { padding: 16px 16px 48px; }
   .meme, .edit-layout { grid-template-columns: 1fr; }
   .session { grid-template-columns: 1fr; }
-  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); column-gap: 12px; }
+  .grid > * { margin-bottom: 14px; }
   .bulkbar { top: 150px; }
 }

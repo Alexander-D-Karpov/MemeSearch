@@ -19,6 +19,23 @@
     img.replaceWith(box);
   }, true);
 
+  const ROW = 4;
+  const sizer = new ResizeObserver((entries) => {
+    for (const { target } of entries) {
+      const gap = parseFloat(getComputedStyle(target).marginBottom) || 0;
+      target.style.gridRowEnd = `span ${Math.max(1, Math.ceil((target.getBoundingClientRect().height + gap) / ROW))}`;
+    }
+  });
+  const track = (grid) => {
+    for (const el of grid.children) {
+      if (!el.classList.contains('more') && !el.classList.contains('empty')) sizer.observe(el);
+    }
+  };
+  document.querySelectorAll('.grid').forEach((grid) => {
+    track(grid);
+    new MutationObserver(() => track(grid)).observe(grid, { childList: true });
+  });
+
   const results = $('#results');
   const meta = $('#meta');
   const input = $('#q');

@@ -1,6 +1,6 @@
 {{define "card"}}
 <a class="card" href="/m/{{.ID}}" data-id="{{.ID}}">
-  <span class="card-media">
+  <span class="card-media" style="{{aspect .Width .Height}}">
     {{if .ThumbURL}}
       <img src="{{.ThumbURL}}" alt="{{truncate 140 .Title}}" loading="lazy" decoding="async">
     {{else}}
