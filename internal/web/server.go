@@ -222,7 +222,7 @@ func logRequests(next http.Handler) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/healthz" {
 			return
 		}
-		slog.Info("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "ms", time.Since(start).Milliseconds())
+		slog.Info("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "ms", time.Since(start).Milliseconds(), "ua", truncate(r.UserAgent(), 120))
 	})
 }
 
@@ -272,4 +272,11 @@ func mediaOnly(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		next.ServeHTTP(w, r)
 	})
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }

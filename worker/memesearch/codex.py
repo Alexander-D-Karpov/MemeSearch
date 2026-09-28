@@ -229,6 +229,13 @@ class CodexPool:
         self.sem = asyncio.Semaphore(max(1, settings.codex_concurrency))
         self.inflight: dict[int, int] = {}
 
+    def inflight_total(self) -> int:
+        return sum(self.inflight.values())
+
+    async def available(self) -> bool:
+        ready, _ = await self._candidates(set())
+        return bool(ready)
+
     async def _candidates(self, exclude: set[int]) -> tuple[list[asyncpg.Record], datetime | None]:
         rows = await self.pool.fetch(
             """SELECT id, name, status, cooldown_until FROM codex_sessions
@@ -256,9 +263,11 @@ class CodexPool:
                 ready, earliest = await self._candidates(tried)
                 ready = [r for r in ready if self.inflight.get(r["id"], 0) < self.settings.codex_per_session]
                 if not ready:
-                    if tried or earliest:
-                        raise CodexUnavailable(last_error, earliest)
-                    raise CodexUnavailable(last_error, None)
+                    if not tried and earliest:
+                        last_error = f"all Codex sessions are rate-limited until {earliest:%Y-%m-%d %H:%M} UTC"
+                    elif not tried and not earliest and self.inflight_total():
+                        last_error = "all Codex sessions are busy"
+                    raise CodexUnavailable(last_error, earliest)
                 sess = ready[0]
                 sid = sess["id"]
                 tried.add(sid)

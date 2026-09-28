@@ -12,6 +12,7 @@ const (
 	StreamHigh   = "ms:q:high"
 	StreamLow    = "ms:q:low"
 	Delayed      = "ms:q:delayed"
+	WaitCodex    = "ms:q:wait:codex"
 	IndexVersion = "ms:index:ver"
 	Events       = "ms:events"
 	Group        = "workers"
@@ -83,10 +84,11 @@ func (q *Queue) Version(ctx context.Context) int64 {
 }
 
 type Lengths struct {
-	High    int64 `json:"high"`
-	Low     int64 `json:"low"`
-	Delayed int64 `json:"delayed"`
-	Pending int64 `json:"in_flight"`
+	High      int64 `json:"high"`
+	Low       int64 `json:"low"`
+	Delayed   int64 `json:"delayed"`
+	WaitCodex int64 `json:"waiting_for_codex"`
+	Pending   int64 `json:"in_flight"`
 }
 
 func (q *Queue) Lengths(ctx context.Context) Lengths {
@@ -109,5 +111,6 @@ func (q *Queue) Lengths(ctx context.Context) Lengths {
 		}
 	}
 	l.Delayed, _ = q.R.ZCard(ctx, Delayed).Result()
+	l.WaitCodex, _ = q.R.ZCard(ctx, WaitCodex).Result()
 	return l
 }

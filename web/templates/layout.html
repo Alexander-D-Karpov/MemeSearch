@@ -36,7 +36,10 @@
 <body{{if .Admin}} class="is-admin"{{end}}>
 <header class="top">
   <div class="top-inner">
-    <a class="brand" href="/" aria-label="Meme Search home"><span class="brand-mark">ms</span><span class="brand-name">memesearch</span></a>
+    <a class="brand" href="/" aria-label="Meme Search home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="13.5" cy="13.5" r="9.5" fill="none" stroke="currentColor" stroke-width="3"/><path d="M20.6 20.6 28 28" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"/><circle cx="10.4" cy="11.4" r="1.6" fill="currentColor"/><circle cx="16.6" cy="11.4" r="1.6" fill="currentColor"/><path d="M9.2 15.4c2.4 2.9 6.2 2.9 8.6 0" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      <span class="brand-name">meme<span>search</span></span>
+    </a>
     <form class="search" action="/" method="get" role="search">
       <input id="q" name="q" type="search" value="{{.Query}}" placeholder="Text, objects, meaning, template…" autocomplete="off" aria-label="Search memes">
       <select name="kind" id="kind" aria-label="Media type">

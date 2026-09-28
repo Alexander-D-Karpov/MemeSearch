@@ -116,6 +116,7 @@ class Worker:
                     await self.recover()
                 if tick % 12 == 0:
                     await self.poll_channels()
+                    await self.wake_codex_waiters()
                 if tick % 60 == 30:
                     await self.backfill_phash()
             except Exception as exc:
@@ -152,6 +153,16 @@ class Worker:
         for job_id in await self._unlocked([j["id"] for j in jobs], "ms:lock:import:"):
             log.info("resuming orphaned import %s", job_id)
             await self.queue.push(STREAM_HIGH, {"type": "import", "job_id": job_id})
+
+    async def wake_codex_waiters(self) -> None:
+        if not await self.queue.codex_waiting():
+            return
+        app = await self.pipeline.app_settings.get()
+        fallback = app.fallback_enabled and self.pipeline.fallback.configured
+        if fallback or (app.codex_enabled and await self.pipeline.codex.available()):
+            n = await self.queue.release_codex_waiters()
+            if n:
+                log.info("an analysis provider is available again, resumed %d memes", n)
 
     async def poll_channels(self) -> None:
         ids = await claim_due(self.pool, self.s.channel_poll_minutes)

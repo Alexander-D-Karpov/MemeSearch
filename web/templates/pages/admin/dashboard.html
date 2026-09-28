@@ -22,6 +22,7 @@
       <dt>Bulk and imports</dt><dd>{{.Queue.Low}} waiting</dd>
       <dt>In progress</dt><dd>{{.Queue.Pending}}</dd>
       <dt>Scheduled retries</dt><dd>{{.Queue.Delayed}}</dd>
+      <dt>Waiting for Codex</dt><dd>{{.Queue.WaitCodex}}{{if .Queue.WaitCodex}} <span class="muted small">resume when a session is free</span>{{end}}</dd>
       {{range $k, $v := .Stats.ByProvider}}<dt>Analyzed by {{$k}}</dt><dd>{{$v}}</dd>{{end}}
     </dl>
     <div class="actions">

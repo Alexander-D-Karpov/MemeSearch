@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
 LOCK_TTL = 900
+ITEM_ATTEMPTS = 3
 BG_URL = re.compile(r"background-image:\s*url\(['\"]?([^'\")]+)['\"]?\)")
 POST_ID = re.compile(r"/(\d+)(?:\?|$)")
 
@@ -202,10 +203,13 @@ class ChannelImporter:
         try:
             async with self._client() as client:
                 posts = await self._collect(client, ch)
+                held = False
                 for post in posts:
+                    ok = True
                     for item in post.media:
-                        await self._item(client, ch, post, item, c)
-                    await self._progress(cid, c, post.id)
+                        ok = await self._item(client, ch, post, item, c) and ok
+                    held = held or not ok
+                    await self._progress(cid, c, 0 if held else post.id)
             await self.pool.execute(
                 """UPDATE channels SET status='idle', last_polled_at=now(),
                 next_poll_at=now() + make_interval(mins => $2) WHERE id=$1""",
@@ -290,14 +294,14 @@ class ChannelImporter:
             posts = posts[-limit:]
         return posts
 
-    async def _item(self, client: httpx.AsyncClient, ch: dict, post: Post, item: MediaItem, c: Counters) -> None:
+    async def _item(self, client: httpx.AsyncClient, ch: dict, post: Post, item: MediaItem, c: Counters) -> bool:
         url = f"https://t.me/{ch['username']}/{item.post_id}"
         if await self.pool.fetchval("SELECT 1 FROM meme_sources WHERE url=$1", url):
-            return
+            return True
         max_seconds = self.s.channel_max_video_seconds
         if item.kind == "too_big" or (item.duration is not None and max_seconds and item.duration > max_seconds):
             c.skipped += 1
-            return
+            return True
         staged: Staged | None = None
         try:
             staged = await self._download(client, ch["username"], item)
@@ -305,7 +309,7 @@ class ChannelImporter:
             if existing:
                 await self._link(existing, url, ch["id"], post)
                 c.duplicates += 1
-                return
+                return True
             workdir = self.s.work_dir / f"ch-{uuid.uuid4().hex}"
             try:
                 phash = await asyncio.to_thread(self._hash, staged, workdir)
@@ -313,7 +317,7 @@ class ChannelImporter:
                 await asyncio.to_thread(shutil.rmtree, workdir, True)
             if phash is False:
                 c.skipped += 1
-                return
+                return True
             if phash:
                 near = await self.pool.fetchval(
                     """SELECT id FROM memes WHERE phash IS NOT NULL AND (kind = 'video') = $2
@@ -326,7 +330,7 @@ class ChannelImporter:
                 if near:
                     await self._link(near, url, ch["id"], post)
                     c.duplicates += 1
-                    return
+                    return True
             res = await self.storage.commit(
                 staged,
                 name=f"{ch['username']}_{item.post_id}.{staged.media.ext}",
@@ -342,12 +346,21 @@ class ChannelImporter:
                 c.duplicates += 1
             else:
                 c.added += 1
+            return True
         except (Unsupported, TooLarge) as exc:
             log.info("skip %s: %s", url, exc)
             c.skipped += 1
+            return True
         except Exception as exc:
-            log.warning("channel item %s failed: %s", url, exc)
+            key = f"ms:ch:retry:{url}"
+            attempts = await self.redis.incr(key)
+            await self.redis.expire(key, 7 * 86400)
+            if attempts < ITEM_ATTEMPTS:
+                log.info("channel item %s failed (attempt %d, retried next poll): %s", url, attempts, exc)
+                return False
+            log.warning("channel item %s failed %d times, giving up: %s", url, attempts, exc)
             c.failed += 1
+            return True
         finally:
             if staged is not None:
                 staged.tmp.unlink(missing_ok=True)
@@ -374,8 +387,10 @@ class ChannelImporter:
         try:
             return await self._download_url(client, item.url)
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code not in (403, 404, 410):
+            if exc.response.status_code not in (403, 404, 410) and exc.response.status_code < 500:
                 raise
+        except httpx.TransportError:
+            pass
         html = await self._fetch(client, f"{self.base}/{username}/{item.post_id}", {"embed": "1", "mode": "tme", "single": "1"})
         for post in parse_page(html, username).posts:
             for fresh in post.media:
@@ -389,14 +404,15 @@ class ChannelImporter:
         tmp = Path(name)
         try:
             with os.fdopen(fd, "wb") as out:
-                async with client.stream("GET", url) as r:
-                    r.raise_for_status()
-                    size = 0
-                    async for chunk in r.aiter_bytes(1 << 20):
-                        size += len(chunk)
-                        if size > self.max_bytes:
-                            raise TooLarge(f"file is larger than {self.max_bytes >> 20} MB")
-                        out.write(chunk)
+                for attempt in range(3):
+                    try:
+                        await self._stream_to(client, url, out)
+                        break
+                    except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+                        transient = isinstance(exc, httpx.TransportError) or exc.response.status_code >= 500
+                        if not transient or attempt == 2:
+                            raise
+                        await asyncio.sleep(3 * (attempt + 1))
 
             def stage() -> Staged:
                 with open(tmp, "rb") as f:
@@ -405,6 +421,18 @@ class ChannelImporter:
             return await asyncio.to_thread(stage)
         finally:
             tmp.unlink(missing_ok=True)
+
+    async def _stream_to(self, client: httpx.AsyncClient, url: str, out) -> None:
+        out.seek(0)
+        out.truncate()
+        async with client.stream("GET", url) as r:
+            r.raise_for_status()
+            size = 0
+            async for chunk in r.aiter_bytes(1 << 20):
+                size += len(chunk)
+                if size > self.max_bytes:
+                    raise TooLarge(f"file is larger than {self.max_bytes >> 20} MB")
+                out.write(chunk)
 
     async def _link(self, meme_id: int, url: str, channel_id: int, post: Post) -> None:
         await self.pool.execute(

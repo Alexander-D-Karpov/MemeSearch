@@ -102,19 +102,12 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; word-
   margin: 0 auto;
   padding: 12px 20px;
 }
-.brand { display: flex; align-items: center; gap: 10px; color: var(--text); flex: none; }
+.brand { display: flex; align-items: center; gap: 8px; color: var(--text); flex: none; }
 .brand:hover { text-decoration: none; }
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius);
-  background: var(--accent);
-  color: var(--accent-text);
-  font: 700 0.85rem/1 var(--mono);
-}
-.brand-name { font: 700 1.05rem/1 var(--mono); letter-spacing: -0.02em; }
+.brand-mark { width: 30px; height: 30px; color: var(--accent); flex: none; }
+.brand-name { font: 800 1.2rem/1 var(--sans); letter-spacing: -0.035em; }
+.brand-name span { color: var(--muted); font-weight: 600; }
+.brand:hover .brand-name span { color: var(--accent); }
 .search { flex: 1; display: flex; gap: 8px; max-width: 720px; }
 .search input { flex: 1; min-width: 0; height: 42px; font-size: 1rem; padding: 0 14px; }
 .search select { height: 42px; }

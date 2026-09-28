@@ -27,10 +27,11 @@ log = logging.getLogger(__name__)
 
 
 class RetryLater(Exception):
-    def __init__(self, message: str, delay: float, count_attempt: bool) -> None:
+    def __init__(self, message: str, delay: float, count_attempt: bool, wait_codex: bool = False) -> None:
         super().__init__(message)
         self.delay = delay
         self.count_attempt = count_attempt
+        self.wait_codex = wait_codex
 
 
 class EmbedPending(Exception):
@@ -141,7 +142,7 @@ class Pipeline:
         except TimeoutError:
             await self._fail_or_retry(meme_id, job, "processing timed out", 120, full, full)
         except RetryLater as exc:
-            await self._fail_or_retry(meme_id, job, str(exc), exc.delay, exc.count_attempt and full, full)
+            await self._fail_or_retry(meme_id, job, str(exc), exc.delay, exc.count_attempt and full, full, exc.wait_codex)
         except (CodexFailed, httpx.HTTPError, OSError, ValueError, RuntimeError) as exc:
             log.warning("meme %s failed: %s", meme_id, exc)
             await self._fail_or_retry(meme_id, job, str(exc), None, full, full)
@@ -239,9 +240,9 @@ class Pipeline:
             raise RetryLater("no analysis provider enabled", 1800, False)
         if retry_at is not None:
             delay = max(60.0, (retry_at - datetime.now(timezone.utc)).total_seconds() + 30)
-            raise RetryLater("; ".join(reasons)[:2000], delay, False)
+            raise RetryLater("; ".join(reasons)[:2000], delay, False, wait_codex=True)
         if reasons and reasons[0].startswith("codex unavailable"):
-            raise RetryLater("; ".join(reasons)[:2000], 900, False)
+            raise RetryLater("; ".join(reasons)[:2000], 1800, False, wait_codex=True)
         raise CodexFailed("; ".join(reasons)[:2000])
 
     async def _save(
@@ -319,6 +320,7 @@ class Pipeline:
         delay: float | None,
         count_attempt: bool,
         incremented: bool,
+        wait_codex: bool = False,
     ) -> None:
         row = await self.pool.fetchrow("SELECT attempts, status FROM memes WHERE id=$1", meme_id)
         if row is None:
@@ -336,5 +338,9 @@ class Pipeline:
         await self.pool.execute(
             "UPDATE memes SET status=$2, error=$3, updated_at=now() WHERE id=$1", meme_id, new_status, error[:2000]
         )
+        if wait_codex:
+            await self.queue.wait_codex(job, delay)
+            log.info("meme %s waits for a Codex session (at most %.0fs): %s", meme_id, delay, error[:200])
+            return
         await self.queue.delay(job, delay)
         log.info("meme %s retry in %.0fs: %s", meme_id, delay, error[:200])
