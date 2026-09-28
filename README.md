@@ -65,6 +65,7 @@ The worker and ml containers run under `worker/seccomp-userns.json` (Docker defa
 1. Open `/login`, then `/admin/codex` → **Add session** → **Login (device code)**, open the link and enter the code. Or import `~/.codex/auth.json`. Add several accounts to rotate; a limited session cools down until its limit resets.
 2. `/admin/upload`: drop files or whole folders (parallel batched uploads, duplicates skipped by sha256), upload a `.zip`, or copy files into `MEDIA_HOST_DIR/inbox` and press **Import inbox**.
 3. Telegram: set `TELEGRAM_BOT_TOKEN`, send `/start` to get your id, put it into `TELEGRAM_ADMIN_IDS`, restart `bot`. Forward memes; the reply is updated with the title when analysis finishes. `/search`, `/stats`, `/reprocess <id>`.
+4. Inline search: in @BotFather send `/setinline`, pick the bot and set a placeholder like `search memes`. Then type `@your_bot cat` in any chat. Open to everyone by default; `TELEGRAM_INLINE_PUBLIC=false` limits it to `TELEGRAM_ADMIN_IDS`. Telegram downloads the media from `PUBLIC_URL`, so it must be reachable from the internet; non-JPEG images are converted via `/m/{id}/photo.jpg`, and videos must be mp4 under 20 MB.
 
 ## Telegram channels
 
