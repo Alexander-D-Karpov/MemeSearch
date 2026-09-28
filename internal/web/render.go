@@ -52,6 +52,13 @@ func (s *Server) funcs() template.FuncMap {
 			return ago(tm)
 		},
 		"datetime": func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
+		"aspect": func(w, h int) template.CSS {
+			if w <= 0 || h <= 0 {
+				return "aspect-ratio: 1 / 1"
+			}
+			r := max(0.45, min(2.2, float64(h)/float64(w)))
+			return template.CSS(fmt.Sprintf("aspect-ratio: 1000 / %d", int(r*1000)))
+		},
 		"deref": func(t *time.Time) time.Time {
 			if t == nil {
 				return time.Time{}
