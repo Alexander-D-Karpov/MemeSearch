@@ -219,7 +219,7 @@ class ChannelImporter:
                 """UPDATE channels SET status='failed', error=$2, last_polled_at=now(),
                 next_poll_at=now() + make_interval(mins => $3) WHERE id=$1""",
                 cid,
-                str(exc)[:2000] or type(exc).__name__,
+                (str(exc) or type(exc).__name__)[:2000],
                 self.s.channel_poll_minutes,
             )
 
@@ -238,7 +238,15 @@ class ChannelImporter:
 
     async def _fetch(self, client: httpx.AsyncClient, url: str, params: dict | None = None) -> str:
         for attempt in range(4):
-            r = await client.get(url, params=params)
+            try:
+                r = await client.get(url, params=params)
+            except httpx.TransportError as exc:
+                if attempt == 2:
+                    raise ChannelUnavailable(
+                        f"cannot reach {self.base} ({type(exc).__name__}); set TELEGRAM_WEB_PROXY in .env and recreate the worker"
+                    ) from exc
+                await asyncio.sleep(5 * (attempt + 1))
+                continue
             if r.status_code == 429:
                 await asyncio.sleep(float(r.headers.get("Retry-After") or 10 * (attempt + 1)))
                 continue

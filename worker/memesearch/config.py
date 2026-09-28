@@ -112,7 +112,7 @@ class Settings(BaseSettings):
 
     @property
     def web_proxy(self) -> str | None:
-        return self.telegram_web_proxy or self.telegram_proxy
+        return self.telegram_web_proxy or self.telegram_proxy or self.openai_proxy
 
     @property
     def fallback_configured(self) -> bool:
