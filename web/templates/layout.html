@@ -6,9 +6,27 @@
 <title>{{.Title}}</title>
 {{with .Description}}<meta name="description" content="{{.}}">{{end}}
 <link rel="canonical" href="{{.Canonical}}">
+<meta property="og:site_name" content="Meme Search">
+<meta property="og:type" content="{{with .OG.Type}}{{.}}{{else}}website{{end}}">
+<meta property="og:url" content="{{.Canonical}}">
 <meta property="og:title" content="{{.Title}}">
 {{with .Description}}<meta property="og:description" content="{{.}}">{{end}}
-{{with .OGImage}}<meta property="og:image" content="{{.}}">{{end}}
+{{with .OG.Image}}<meta property="og:image" content="{{.}}">
+<meta property="og:image:secure_url" content="{{.}}">
+{{with $.OG.ImageType}}<meta property="og:image:type" content="{{.}}">{{end}}
+{{if and $.OG.ImageW $.OG.ImageH}}<meta property="og:image:width" content="{{$.OG.ImageW}}">
+<meta property="og:image:height" content="{{$.OG.ImageH}}">{{end}}
+{{with $.OG.ImageAlt}}<meta property="og:image:alt" content="{{.}}">{{end}}
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{{.}}">
+{{else}}<meta name="twitter:card" content="summary">{{end}}
+<meta name="twitter:title" content="{{.Title}}">
+{{with .Description}}<meta name="twitter:description" content="{{.}}">{{end}}
+{{with .OG.Video}}<meta property="og:video" content="{{.}}">
+<meta property="og:video:secure_url" content="{{.}}">
+{{with $.OG.VideoType}}<meta property="og:video:type" content="{{.}}">{{end}}
+{{if and $.OG.VideoW $.OG.VideoH}}<meta property="og:video:width" content="{{$.OG.VideoW}}">
+<meta property="og:video:height" content="{{$.OG.VideoH}}">{{end}}{{end}}
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0c0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -41,6 +59,7 @@
     <a href="/admin/upload"{{if eq .Nav "upload"}} aria-current="page"{{end}}>Upload &amp; import</a>
     <a href="/admin/memes"{{if eq .Nav "memes"}} aria-current="page"{{end}}>Memes</a>
     <a href="/admin/memes?status=failed"{{if eq .Nav "failed"}} aria-current="page"{{end}}>Failed</a>
+    <a href="/admin/channels"{{if eq .Nav "channels"}} aria-current="page"{{end}}>Channels</a>
     <a href="/admin/codex"{{if eq .Nav "codex"}} aria-current="page"{{end}}>Codex sessions</a>
     <a href="/admin/settings"{{if eq .Nav "settings"}} aria-current="page"{{end}}>Settings</a>
   </nav>

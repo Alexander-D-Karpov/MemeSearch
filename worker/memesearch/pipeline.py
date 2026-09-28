@@ -260,6 +260,7 @@ class Pipeline:
             "text_vec=$7",
             "provider=$8",
             "model=$9",
+            "phash=COALESCE($10::text::bit(256), phash)",
         ]
         args: list[Any] = [
             meme_id,
@@ -271,6 +272,7 @@ class Pipeline:
             text_vec,
             provider or "",
             model or "",
+            prep.phash,
         ]
         sets += self._text_sets(fields, args)
         await self.pool.execute(f"UPDATE memes SET {', '.join(sets)} WHERE id=$1", *args)

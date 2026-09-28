@@ -131,6 +131,7 @@ class Storage:
         source_ref: str = "",
         caption: str = "",
         stream: str = STREAM_HIGH,
+        phash: str | None = None,
     ) -> IngestResult:
         try:
             existing = await self.pool.fetchval("SELECT id FROM memes WHERE sha256=$1", staged.sha)
@@ -141,8 +142,8 @@ class Storage:
             dst.parent.mkdir(parents=True, exist_ok=True)
             await asyncio.to_thread(shutil.move, staged.tmp, dst)
             meme_id = await self.pool.fetchval(
-                """INSERT INTO memes (sha256, kind, mime, ext, file_path, size_bytes, original_name, source, source_ref, caption)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (sha256) DO NOTHING RETURNING id""",
+                """INSERT INTO memes (sha256, kind, mime, ext, file_path, size_bytes, original_name, source, source_ref, caption, phash)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::text::bit(256)) ON CONFLICT (sha256) DO NOTHING RETURNING id""",
                 staged.sha,
                 staged.media.kind,
                 staged.media.mime,
@@ -153,6 +154,7 @@ class Storage:
                 source,
                 source_ref[:1000],
                 caption[:4000],
+                phash,
             )
             if meme_id is None:
                 existing = await self.pool.fetchval("SELECT id FROM memes WHERE sha256=$1", staged.sha)

@@ -68,9 +68,22 @@ func (s *Server) pageIndex(w http.ResponseWriter, r *http.Request) {
 	if res.Query != "" {
 		title = res.Query + " — Meme Search"
 	}
+	var og OpenGraph
+	for _, m := range res.Memes {
+		if m.Kind != "video" || m.ThumbPath != "" {
+			og = s.memeOG(m)
+			og.Type, og.Video = "website", ""
+			break
+		}
+	}
+	if og.Type == "" {
+		og.Type = "website"
+	}
 	s.render(w, r, http.StatusOK, "index", Page{
 		Title:       title,
 		Description: "Search memes by text, meaning, objects and context.",
+		OG:          og,
+		Canonical:   s.searchCanonical(res.Query, res.Kind),
 		Query:       res.Query,
 		Kind:        res.Kind,
 		Data:        res,
@@ -92,6 +105,7 @@ func (s *Server) partialResults(w http.ResponseWriter, r *http.Request) {
 type MemePage struct {
 	Meme    *store.Meme
 	Similar []*store.Meme
+	Sources []*store.MemeSource
 }
 
 func (s *Server) visibleMeme(r *http.Request) (*store.Meme, error) {
@@ -126,23 +140,20 @@ func (s *Server) pageMeme(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("similar", "err", err)
 	}
 	s.decorate(similar...)
+	sources, err := s.store.MemeSources(r.Context(), m.ID)
+	if err != nil {
+		slog.Warn("sources", "err", err)
+	}
 	title := m.Title
 	if title == "" {
 		title = "Meme #" + strconv.FormatInt(m.ID, 10)
 	}
-	desc := m.Description
-	if len([]rune(desc)) > 200 {
-		desc = string([]rune(desc)[:200]) + "…"
-	}
-	og := m.ThumbURL
-	if og != "" && strings.HasPrefix(og, "/") {
-		og = s.cfg.PublicURL + og
-	}
+	desc := clip(firstNonEmpty(m.Description, m.OCRText, m.Caption, m.Transcript, "A meme on Meme Search"), 200)
 	s.render(w, r, http.StatusOK, "meme", Page{
 		Title:       title,
 		Description: desc,
-		OGImage:     og,
-		Data:        MemePage{Meme: m, Similar: similar},
+		OG:          s.memeOG(m),
+		Data:        MemePage{Meme: m, Similar: similar, Sources: sources},
 	})
 }
 
@@ -269,4 +280,18 @@ func nonNil(m []*store.Meme) []*store.Meme {
 		return []*store.Meme{}
 	}
 	return m
+}
+
+func (s *Server) searchCanonical(q, kind string) string {
+	v := url.Values{}
+	if q != "" {
+		v.Set("q", q)
+	}
+	if kind != "" {
+		v.Set("kind", kind)
+	}
+	if len(v) == 0 {
+		return s.cfg.PublicURL + "/"
+	}
+	return s.cfg.PublicURL + "/?" + v.Encode()
 }

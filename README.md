@@ -66,6 +66,20 @@ The worker and ml containers run under `worker/seccomp-userns.json` (Docker defa
 2. `/admin/upload`: drop files or whole folders (parallel batched uploads, duplicates skipped by sha256), upload a `.zip`, or copy files into `MEDIA_HOST_DIR/inbox` and press **Import inbox**.
 3. Telegram: set `TELEGRAM_BOT_TOKEN`, send `/start` to get your id, put it into `TELEGRAM_ADMIN_IDS`, restart `bot`. Forward memes; the reply is updated with the title when analysis finishes. `/search`, `/stats`, `/reprocess <id>`.
 
+## Telegram channels
+
+`/admin/channels`: add a public channel (`@name` or `https://t.me/name`). The worker reads the channel's web preview (`t.me/s/name`), no bot or account is needed; private channels and channels with the preview turned off cannot be read.
+
+- First run imports up to **backfill** old posts (0 = whole history), then new posts are fetched every `CHANNEL_POLL_MINUTES`. **Check now** fetches immediately.
+- Each imported meme links to its post, and the post text is passed to the analysis as the caption.
+- Dedup: exact file (sha256) or same picture (256-bit perceptual hash within `CHANNEL_DEDUP_DISTANCE` bits, compared against the whole library) is not added again; the post link is attached to the existing meme instead, so a meme can show several sources.
+- Videos longer than `CHANNEL_MAX_VIDEO_SECONDS` and posts Telegram marks as "media too big" are skipped. Files over `CHANNEL_MAX_FILE_MB` too.
+- If t.me is blocked from the server, set `TELEGRAM_WEB_PROXY` (or `TELEGRAM_PROXY`).
+
+## Link previews
+
+Meme pages carry Open Graph and Twitter tags. Images up to 5 MB in jpg/png/gif are used as is; everything else (webp, heic, videos) gets a JPEG preview from `/m/{id}/og.jpg`. Videos also get `og:video`, so Telegram and Discord can play them inline.
+
 ## Reprocessing
 
 - Per meme: **Reprocess** (Codex again) or **Re-embed** (vectors only) on the meme page.

@@ -27,6 +27,7 @@ class Prepared:
     frames: list[Path] = field(default_factory=list)
     frame_times: list[float] = field(default_factory=list)
     thumb: Path | None = None
+    phash: str | None = None
 
 
 def _flatten(img: Image.Image) -> Image.Image:
@@ -51,14 +52,31 @@ def _save_jpeg(img: Image.Image, path: Path, max_side: int) -> Path:
     return path
 
 
-def _save_thumb(img: Image.Image, path: Path, size: int) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _thumb(img: Image.Image, size: int) -> Image.Image:
     t = img.copy()
     t.thumbnail((size, size * 3), Image.LANCZOS)
+    return t
+
+
+def dhash(img: Image.Image, side: int = 16) -> str:
+    g = img.convert("L").resize((side + 1, side), Image.LANCZOS)
+    px = g.tobytes()
+    w = side + 1
+    return "".join("1" if px[y * w + x] > px[y * w + x + 1] else "0" for y in range(side) for x in range(side))
+
+
+def hamming(a: str, b: str) -> int:
+    return sum(x != y for x, y in zip(a, b, strict=True))
+
+
+def _save_thumb(img: Image.Image, path: Path, size: int, p: Prepared) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    t = _thumb(img, size)
     tmp = path.with_suffix(".tmp.webp")
     t.save(tmp, "WEBP", quality=80, method=4)
     tmp.replace(path)
     path.chmod(0o644)
+    p.phash = dhash(t)
     return path
 
 
@@ -101,7 +119,7 @@ def prepare_image(src: Path, workdir: Path, thumb_path: Path, max_side: int, thu
         img = _flatten(im)
     p = Prepared(width=img.width, height=img.height)
     p.frames.append(_save_jpeg(img, workdir / "frame_00.jpg", max_side))
-    p.thumb = _save_thumb(img, thumb_path, thumb_size)
+    p.thumb = _save_thumb(img, thumb_path, thumb_size, p)
     return p
 
 
@@ -126,7 +144,7 @@ def prepare_gif(src: Path, workdir: Path, thumb_path: Path, max_frames: int, max
             p.frames.append(_save_jpeg(img, workdir / f"frame_{n:02d}.jpg", max_side))
             p.frame_times.append(starts[i])
             if n == 0:
-                p.thumb = _save_thumb(img, thumb_path, thumb_size)
+                p.thumb = _save_thumb(img, thumb_path, thumb_size, p)
     p.duration_ms = int(sum(durations)) if total > 1 else 0
     if not p.frames:
         raise ValueError("gif has no frames")
@@ -151,13 +169,7 @@ def prepare_video(src: Path, workdir: Path, thumb_path: Path, max_frames: int, m
     p.duration_ms = int(duration * 1000)
     p.has_audio = any(s.get("codec_type") == "audio" for s in info.get("streams", []))
 
-    if duration <= 0:
-        times = [0.0]
-    else:
-        count = max(1, min(max_frames, int(duration / 1.5) + 1))
-        margin = min(0.3, duration * 0.05)
-        span = max(0.0, duration - 2 * margin)
-        times = [margin + span * i / max(1, count - 1) for i in range(count)] if count > 1 else [duration / 2]
+    times = video_times(duration, max_frames)
     for n, at in enumerate(times):
         dst = workdir / f"frame_{n:02d}.jpg"
         if _video_frame(src, at, dst, max_side):
@@ -170,8 +182,51 @@ def prepare_video(src: Path, workdir: Path, thumb_path: Path, max_frames: int, m
         raise ValueError("could not extract any frame")
     poster = p.frames[min(1, len(p.frames) - 1)] if duration > 3 else p.frames[0]
     with Image.open(poster) as im:
-        p.thumb = _save_thumb(im.convert("RGB"), thumb_path, thumb_size)
+        p.thumb = _save_thumb(im.convert("RGB"), thumb_path, thumb_size, p)
     return p
+
+
+def video_times(duration: float, max_frames: int) -> list[float]:
+    if duration <= 0:
+        return [0.0]
+    count = max(1, min(max_frames, int(duration / 1.5) + 1))
+    if count == 1:
+        return [duration / 2]
+    margin = min(0.3, duration * 0.05)
+    span = max(0.0, duration - 2 * margin)
+    return [margin + span * i / (count - 1) for i in range(count)]
+
+
+def poster_time(duration: float, max_frames: int) -> float:
+    times = video_times(duration, max_frames)
+    return times[min(1, len(times) - 1)] if duration > 3 else times[0]
+
+
+def video_duration(src: Path) -> float:
+    info = ffprobe(src)
+    video = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), None)
+    if video is None:
+        raise ValueError("no video stream")
+    return float(info.get("format", {}).get("duration") or video.get("duration") or 0)
+
+
+def content_hash(kind: str, src: Path, workdir: Path, *, max_video_frames: int, frame_max_side: int, thumb_size: int) -> str:
+    if kind == "video":
+        workdir.mkdir(parents=True, exist_ok=True)
+        dst = workdir / "poster.jpg"
+        at = poster_time(video_duration(src), max_video_frames)
+        if not _video_frame(src, at, dst, frame_max_side) and not _video_frame(src, 0, dst, frame_max_side):
+            raise ValueError("could not extract a frame")
+        with Image.open(dst) as im:
+            return dhash(_thumb(im.convert("RGB"), thumb_size))
+    with Image.open(src) as im:
+        im.seek(0)
+        return dhash(_thumb(_flatten(im.copy() if kind == "gif" else im), thumb_size))
+
+
+def thumb_hash(path: Path) -> str:
+    with Image.open(path) as im:
+        return dhash(im.convert("RGB"))
 
 
 def prepare(

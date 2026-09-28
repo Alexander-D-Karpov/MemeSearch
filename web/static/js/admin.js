@@ -291,6 +291,26 @@
     });
   }
 
+  const channelAdd = $('#channel-add');
+  if (channelAdd) {
+    channelAdd.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api('POST', '/api/v1/admin/channels', {
+          channel: channelAdd.channel.value.trim(),
+          backfill_limit: Number(channelAdd.backfill_limit.value || 0),
+        });
+        location.reload();
+      } catch (err) { toast(err.message, 5000); }
+    });
+    $$('[data-channel-enabled]').forEach((box) => {
+      box.addEventListener('change', async () => {
+        const id = box.closest('[data-channel]').dataset.channel;
+        try { await api('PATCH', `/api/v1/admin/channels/${id}`, { enabled: box.checked }); toast('Saved'); } catch (err) { toast(err.message); }
+      });
+    });
+  }
+
   const settingsForm = $('#settings-form');
   if (settingsForm) {
     settingsForm.addEventListener('submit', async (e) => {

@@ -67,6 +67,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /search", s.pageIndex)
 	mux.HandleFunc("GET /partials/results", s.partialResults)
 	mux.HandleFunc("GET /m/{id}", s.pageMeme)
+	mux.HandleFunc("GET /m/{id}/og.jpg", s.memeOGImage)
 	mux.HandleFunc("GET /login", s.pageLogin)
 	mux.HandleFunc("POST /login", s.doLogin)
 	mux.HandleFunc("POST /logout", s.doLogout)
@@ -81,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /admin/memes", admin(http.HandlerFunc(s.pageAdminMemes)))
 	mux.Handle("GET /admin/m/{id}/edit", admin(http.HandlerFunc(s.pageEdit)))
 	mux.Handle("GET /admin/codex", admin(http.HandlerFunc(s.pageCodex)))
+	mux.Handle("GET /admin/channels", admin(http.HandlerFunc(s.pageChannels)))
 	mux.Handle("GET /admin/settings", admin(http.HandlerFunc(s.pageSettings)))
 
 	mux.Handle("GET /api/v1/admin/stats", admin(http.HandlerFunc(s.apiStats)))
@@ -95,6 +97,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/admin/memes/{id}", admin(http.HandlerFunc(s.apiDeleteMeme)))
 	mux.Handle("GET /api/v1/admin/settings", admin(http.HandlerFunc(s.apiGetSettings)))
 	mux.Handle("PUT /api/v1/admin/settings", admin(http.HandlerFunc(s.apiPutSettings)))
+
+	mux.Handle("GET /api/v1/admin/channels", admin(http.HandlerFunc(s.apiChannels)))
+	mux.Handle("POST /api/v1/admin/channels", admin(http.HandlerFunc(s.apiChannelCreate)))
+	mux.Handle("PATCH /api/v1/admin/channels/{id}", admin(http.HandlerFunc(s.apiChannelPatch)))
+	mux.Handle("POST /api/v1/admin/channels/{id}/poll", admin(http.HandlerFunc(s.apiChannelPoll)))
+	mux.Handle("DELETE /api/v1/admin/channels/{id}", admin(http.HandlerFunc(s.apiChannelDelete)))
 
 	mux.Handle("GET /api/v1/admin/codex", admin(http.HandlerFunc(s.apiCodexList)))
 	mux.Handle("POST /api/v1/admin/codex", admin(http.HandlerFunc(s.apiCodexCreate)))
