@@ -1,14 +1,18 @@
 {{define "card"}}
-<a class="card" href="/m/{{.ID}}" data-id="{{.ID}}" title="{{.Title}}">
-  {{if .ThumbURL}}
-    <img src="{{.ThumbURL}}" alt="{{truncate 140 .Title}}" loading="lazy" decoding="async"{{if and .Width .Height}} width="{{.Width}}" height="{{.Height}}"{{end}}>
-  {{else}}
-    <div class="noimg">{{.Kind}}</div>
-  {{end}}
-  {{if ne .Kind "image"}}<span class="badge">{{if eq .Kind "video"}}▶ {{dur .DurationMs}}{{else}}GIF{{end}}</span>{{end}}
-  {{if ne .Status "done"}}<span class="badge status-{{.Status}}">{{.Status}}</span>{{end}}
-  {{if .Hidden}}<span class="badge status-failed">hidden</span>{{end}}
-  <span class="cap">{{truncate 90 .Title}}</span>
+<a class="card" href="/m/{{.ID}}" data-id="{{.ID}}">
+  <span class="card-media">
+    {{if .ThumbURL}}
+      <img src="{{.ThumbURL}}" alt="{{truncate 140 .Title}}" loading="lazy" decoding="async">
+    {{else}}
+      <span class="noimg">{{.Kind}}</span>
+    {{end}}
+    <span class="card-tags">
+      {{if eq .Kind "video"}}<span class="tag">VIDEO {{dur .DurationMs}}</span>{{else if eq .Kind "gif"}}<span class="tag">GIF</span>{{end}}
+      {{if ne .Status "done"}}<span class="tag tag-{{.Status}}">{{.Status}}</span>{{end}}
+      {{if .Hidden}}<span class="tag tag-failed">hidden</span>{{end}}
+    </span>
+  </span>
+  <span class="card-title">{{if .Title}}{{truncate 90 .Title}}{{else}}#{{.ID}}{{end}}</span>
 </a>
 {{end}}
 

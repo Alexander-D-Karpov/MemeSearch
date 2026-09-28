@@ -1,6 +1,6 @@
 {{define "content"}}
 {{with .Data}}
-<h1>Edit <a href="/m/{{.ID}}">#{{.ID}}</a></h1>
+<div class="page-head"><h1>Edit <a href="/m/{{.ID}}">#{{.ID}}</a></h1></div>
 <div class="edit-layout">
   <div class="viewer small">
     {{if eq .Kind "video"}}

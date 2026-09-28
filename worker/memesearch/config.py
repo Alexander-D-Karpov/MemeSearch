@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     codex_timeout_seconds: int = 300
     codex_default_cooldown_minutes: int = 30
     codex_login_timeout_seconds: int = 900
+    openai_proxy: str | None = None
     codex_http_proxy: str | None = None
     codex_https_proxy: str | None = None
     codex_all_proxy: str | None = None
@@ -41,6 +42,7 @@ class Settings(BaseSettings):
 
     fallback_base_url: str = "https://api.openai.com/v1"
     fallback_api_key: str | None = None
+    fallback_use_proxy: bool = True
     fallback_model: str = "gpt-4.1-mini"
     fallback_concurrency: int = 4
     fallback_timeout_seconds: int = 180
@@ -72,6 +74,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "codex_model",
+        "openai_proxy",
         "codex_http_proxy",
         "codex_https_proxy",
         "codex_all_proxy",

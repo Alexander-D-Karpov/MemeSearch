@@ -107,10 +107,11 @@ class CodexRuntime:
         env["HOME"] = str(home)
         env["CODEX_HOME"] = str(home)
         env["NO_PROXY"] = env["no_proxy"] = self.settings.no_proxy
+        shared = self.settings.openai_proxy
         for key, value in (
-            ("HTTP_PROXY", self.settings.codex_http_proxy),
-            ("HTTPS_PROXY", self.settings.codex_https_proxy),
-            ("ALL_PROXY", self.settings.codex_all_proxy),
+            ("HTTP_PROXY", self.settings.codex_http_proxy or shared),
+            ("HTTPS_PROXY", self.settings.codex_https_proxy or shared),
+            ("ALL_PROXY", self.settings.codex_all_proxy or shared),
         ):
             if value:
                 env[key] = env[key.lower()] = value

@@ -9,44 +9,47 @@
 <meta property="og:title" content="{{.Title}}">
 {{with .Description}}<meta property="og:description" content="{{.}}">{{end}}
 {{with .OGImage}}<meta property="og:image" content="{{.}}">{{end}}
-<meta name="theme-color" content="#111418">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0c0d10" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <link rel="icon" href="{{static "img/favicon.svg"}}" type="image/svg+xml">
 <link rel="stylesheet" href="{{static "css/app.css"}}">
 </head>
 <body{{if .Admin}} class="is-admin"{{end}}>
 <header class="top">
-  <a class="brand" href="/">meme<span>search</span></a>
-  <form class="search" action="/" method="get" role="search">
-    <input id="q" name="q" type="search" value="{{.Query}}" placeholder="Search text, objects, meaning…" autocomplete="off" autofocus>
-    <select name="kind" id="kind" aria-label="Type">
-      <option value="">All</option>
-      <option value="image"{{if eq .Kind "image"}} selected{{end}}>Images</option>
-      <option value="gif"{{if eq .Kind "gif"}} selected{{end}}>GIFs</option>
-      <option value="video"{{if eq .Kind "video"}} selected{{end}}>Videos</option>
-    </select>
-  </form>
-  <nav>
+  <div class="top-inner">
+    <a class="brand" href="/" aria-label="Meme Search home"><span class="brand-mark">ms</span><span class="brand-name">memesearch</span></a>
+    <form class="search" action="/" method="get" role="search">
+      <input id="q" name="q" type="search" value="{{.Query}}" placeholder="Text, objects, meaning, template…" autocomplete="off" aria-label="Search memes">
+      <select name="kind" id="kind" aria-label="Media type">
+        <option value="">All types</option>
+        <option value="image"{{if eq .Kind "image"}} selected{{end}}>Images</option>
+        <option value="gif"{{if eq .Kind "gif"}} selected{{end}}>GIFs</option>
+        <option value="video"{{if eq .Kind "video"}} selected{{end}}>Videos</option>
+      </select>
+    </form>
     {{if .Admin}}
-      <a href="/admin">Admin</a>
-      <a href="/admin/upload">Upload</a>
-      <form action="/logout" method="post" class="inline"><button class="link">Logout</button></form>
+    <nav class="top-nav">
+      <a class="btn btn-primary" href="/admin/upload">Upload</a>
+      <form action="/logout" method="post"><button class="btn btn-ghost" type="submit">Log out</button></form>
+    </nav>
     {{end}}
+  </div>
+  {{if .Admin}}
+  <nav class="tabs" aria-label="Admin">
+    <a href="/admin"{{if eq .Nav "dashboard"}} aria-current="page"{{end}}>Dashboard</a>
+    <a href="/admin/upload"{{if eq .Nav "upload"}} aria-current="page"{{end}}>Upload &amp; import</a>
+    <a href="/admin/memes"{{if eq .Nav "memes"}} aria-current="page"{{end}}>Memes</a>
+    <a href="/admin/memes?status=failed"{{if eq .Nav "failed"}} aria-current="page"{{end}}>Failed</a>
+    <a href="/admin/codex"{{if eq .Nav "codex"}} aria-current="page"{{end}}>Codex sessions</a>
+    <a href="/admin/settings"{{if eq .Nav "settings"}} aria-current="page"{{end}}>Settings</a>
   </nav>
+  {{end}}
 </header>
-{{if .Admin}}
-<nav class="subnav">
-  <a href="/admin">Dashboard</a>
-  <a href="/admin/upload">Upload &amp; import</a>
-  <a href="/admin/memes">Memes</a>
-  <a href="/admin/memes?status=failed">Failed</a>
-  <a href="/admin/codex">Codex sessions</a>
-  <a href="/admin/settings">Settings</a>
-</nav>
-{{end}}
-<main>
+<main class="page">
 {{template "content" .}}
 </main>
-<div id="toast" role="status" aria-live="polite"></div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
 <script src="{{static "js/app.js"}}" defer></script>
 {{if .Admin}}<script src="{{static "js/admin.js"}}" defer></script>{{end}}
 </body>

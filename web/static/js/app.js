@@ -5,9 +5,9 @@
     const t = $('#toast');
     if (!t) return;
     t.textContent = msg;
-    t.classList.add('show');
+    t.hidden = false;
     clearTimeout(t._timer);
-    t._timer = setTimeout(() => t.classList.remove('show'), ms);
+    t._timer = setTimeout(() => { t.hidden = true; }, ms);
   };
 
   const results = $('#results');

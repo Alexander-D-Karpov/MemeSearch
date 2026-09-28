@@ -262,7 +262,10 @@ async def start_login(sid: int) -> dict[str, Any]:
         handle = await client.login_chatgpt_device_code()
     except Exception as exc:
         await client.close()
-        raise HTTPException(status_code=502, detail=f"could not start device login: {exc}") from exc
+        detail = f"could not start device login: {exc}"
+        if "403" in str(exc) and not (settings.openai_proxy or settings.codex_https_proxy or settings.codex_all_proxy):
+            detail += ". OpenAI refused the request, usually because the server's country is blocked. Set OPENAI_PROXY in .env to a proxy outside the blocked region and restart ml and worker."
+        raise HTTPException(status_code=502, detail=detail) from exc
     login = LoginState(
         client=client,
         handle=handle,

@@ -24,6 +24,7 @@ type Page struct {
 	Kind        string
 	Canonical   string
 	OGImage     string
+	Nav         string
 	Data        any
 }
 
@@ -111,6 +112,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, code int, name s
 		return
 	}
 	p.Admin = auth.IsAdmin(r.Context())
+	p.Nav = navKey(r)
 	if p.Canonical == "" {
 		p.Canonical = s.cfg.PublicURL + r.URL.Path
 	}
@@ -141,6 +143,25 @@ func (s *Server) renderPartial(w http.ResponseWriter, name string, data any) {
 
 func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusNotFound, "error", Page{Title: "Not found", Data: "This meme does not exist or is not public."})
+}
+
+func navKey(r *http.Request) string {
+	p := r.URL.Path
+	switch {
+	case p == "/admin":
+		return "dashboard"
+	case p == "/admin/upload":
+		return "upload"
+	case p == "/admin/memes" && r.URL.Query().Get("status") == "failed":
+		return "failed"
+	case strings.HasPrefix(p, "/admin/memes") || strings.HasPrefix(p, "/admin/m/"):
+		return "memes"
+	case p == "/admin/codex":
+		return "codex"
+	case p == "/admin/settings":
+		return "settings"
+	}
+	return ""
 }
 
 func humanBytes(n int64) string {

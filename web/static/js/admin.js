@@ -312,17 +312,22 @@
     let u = {};
     try { u = JSON.parse(cell.dataset.usage || '{}'); } catch { }
     const rl = u.rateLimits || u.rate_limits;
-    if (!rl) { cell.textContent = '—'; return; }
-    const win = (w, label) => {
+    if (!rl) { cell.innerHTML = '<p class="small muted">Not checked yet. Press Check account.</p>'; return; }
+    const windowName = (w, fallback) => {
+      const mins = w.windowDurationMins ?? w.window_duration_mins;
+      if (!mins) return fallback;
+      return mins >= 1440 ? `${Math.round(mins / 1440)}-day limit` : `${Math.round(mins / 60)}-hour limit`;
+    };
+    const win = (w, fallback) => {
       if (!w) return '';
       const used = w.usedPercent ?? w.used_percent ?? 0;
       const reset = w.resetsAt ?? w.resets_at;
       const when = reset ? new Date(reset * 1000).toLocaleString() : '';
-      return `<div class="small">${label}: ${used}%${when ? ` · resets ${esc(when)}` : ''}</div><div class="meter"><div style="width:${Math.min(100, used)}%"></div></div>`;
+      return `<div class="small">${esc(windowName(w, fallback))}: ${used}% used${when ? `, resets ${esc(when)}` : ''}</div><div class="meter"><div style="width:${Math.min(100, used)}%"></div></div>`;
     };
-    cell.innerHTML = win(rl.primary, 'short') + win(rl.secondary, 'weekly') || '—';
+    cell.innerHTML = win(rl.primary, 'Short limit') + win(rl.secondary, 'Weekly limit') || '<p class="small muted">No limits reported.</p>';
   };
-  $$('td.usage').forEach(renderUsage);
+  $$('.usage[data-usage]').forEach(renderUsage);
 
   const codexAdd = $('#codex-add');
   if (codexAdd) {
@@ -357,7 +362,7 @@
       }
     };
 
-    $$('table.codex tr[data-id]').forEach((row) => {
+    $$('.session[data-id]').forEach((row) => {
       const id = row.dataset.id;
       const box = row.querySelector('.login-box');
       api('GET', `/api/v1/admin/codex/${id}/login`).then((s) => { if (s.state === 'pending') loginPoll(row, box); }).catch(() => { });

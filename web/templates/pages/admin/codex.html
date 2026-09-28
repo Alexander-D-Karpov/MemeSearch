@@ -1,59 +1,59 @@
 {{define "content"}}
-<h1>Codex sessions</h1>
-<p class="muted">Each session is a ChatGPT subscription logged into Codex. The worker rotates between enabled sessions. A session that hits its usage limit cools down until the limit resets, and the next session (or the fallback API) takes over.</p>
+<div class="page-head">
+  <div>
+    <h1>Codex sessions</h1>
+    <p>Each session is a ChatGPT subscription logged into Codex. The worker rotates between enabled sessions. When one hits its usage limit it pauses until the limit resets, and the next session or the fallback API takes over.</p>
+  </div>
+</div>
 
-<section class="panel">
-  <h2>Add session</h2>
-  <form id="codex-add" class="row">
-    <input name="name" placeholder="Name, e.g. main account" required>
-    <button class="btn primary">Add</button>
-  </form>
-</section>
+<form id="codex-add" class="row">
+  <input id="codex-name" name="name" placeholder="Session name, e.g. main account" required>
+  <button class="btn btn-primary" type="submit">Add session</button>
+</form>
 
-<section class="panel">
-  <table class="codex">
-    <thead><tr><th>Name</th><th>Status</th><th>Account</th><th>Usage</th><th>Priority</th><th>OK / Fail</th><th>Last used</th><th></th></tr></thead>
-    <tbody>
-    {{range .Data}}
-    <tr data-id="{{.ID}}">
-      <td>
-        <b>{{.Name}}</b>
-        <label class="check small"><input type="checkbox" data-toggle-enabled{{if .Enabled}} checked{{end}}> enabled</label>
-      </td>
-      <td class="status-{{.Status}}">
-        {{.Status}}
-        {{if .CoolingDown}}<br><span class="small">cooldown until <time data-local="{{datetime (deref .CooldownUntil)}}"></time></span>{{end}}
-        {{if .LastError}}<br><span class="error small" title="{{.LastError}}">{{truncate 120 .LastError}}</span>{{end}}
-      </td>
-      <td>{{.Email}}<br><span class="muted small">{{.Plan}}</span></td>
-      <td class="usage" data-usage="{{printf "%s" .Usage}}"></td>
-      <td><input type="number" class="prio" value="{{.Priority}}" data-priority></td>
-      <td>{{.OKCount}} / {{.FailCount}}</td>
-      <td>{{ago .LastUsedAt}}</td>
-      <td class="actions">
-        <button class="btn" data-codex="login">Login (device code)</button>
-        <label class="btn">Import auth.json<input type="file" accept=".json,application/json" data-codex-auth hidden></label>
-        <button class="btn" data-codex="check">Check</button>
-        {{if .CoolingDown}}<button class="btn" data-codex="clear">Clear cooldown</button>{{end}}
-        <button class="btn" data-codex="logout">Logout</button>
-        <button class="btn danger" data-codex="delete">Delete</button>
-        <div class="login-box" hidden></div>
-      </td>
-    </tr>
-    {{else}}
-    <tr><td colspan="8">No sessions yet.</td></tr>
-    {{end}}
-    </tbody>
-  </table>
-</section>
+<div class="sessions">
+{{range .Data}}
+  <section class="session" data-id="{{.ID}}">
+    <div class="session-name">
+      <b>{{.Name}}</b>
+      <span class="pill status-{{.Status}}">{{.Status}}</span>
+      <label class="check small"><input type="checkbox" data-toggle-enabled{{if .Enabled}} checked{{end}}> Enabled</label>
+    </div>
+    <dl class="facts">
+      <dt>Account</dt><dd>{{if .Email}}{{.Email}}{{else}}—{{end}}</dd>
+      <dt>Plan</dt><dd>{{if .Plan}}{{.Plan}}{{else}}—{{end}}</dd>
+      <dt>Done / failed</dt><dd>{{.OKCount}} / {{.FailCount}}</dd>
+      <dt>Last used</dt><dd>{{ago .LastUsedAt}}</dd>
+      <dt>Priority</dt><dd><input type="number" class="prio" value="{{.Priority}}" data-priority aria-label="Priority"></dd>
+    </dl>
+    <div>
+      <span class="label">Usage</span>
+      <div class="usage" data-usage="{{printf "%s" .Usage}}"></div>
+      {{if .CoolingDown}}<p class="small status-limited">Paused until <time data-local="{{datetime (deref .CooldownUntil)}}"></time></p>{{end}}
+      {{if .LastError}}<p class="small error">{{truncate 300 .LastError}}</p>{{end}}
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" type="button" data-codex="login">Log in with device code</button>
+      <label class="btn">Import auth.json<input type="file" accept=".json,application/json" data-codex-auth></label>
+      <button class="btn" type="button" data-codex="check">Check account</button>
+      {{if .CoolingDown}}<button class="btn" type="button" data-codex="clear">Resume now</button>{{end}}
+      <button class="btn" type="button" data-codex="logout">Log out</button>
+      <button class="btn danger" type="button" data-codex="delete">Delete</button>
+    </div>
+    <div class="login-box" hidden></div>
+  </section>
+{{else}}
+  <p class="empty">No sessions yet. Add one above, then log it in.</p>
+{{end}}
+</div>
 
 <section class="panel">
   <h2>How to log in</h2>
-  <ol>
-    <li>Add a session and click <b>Login (device code)</b>.</li>
-    <li>Open the link shown, sign in to ChatGPT, and enter the code. The status changes to <b>ok</b> by itself.</li>
-    <li>Or import an existing <code>~/.codex/auth.json</code> from a machine where you ran <code>codex login</code>.</li>
+  <ol class="steps">
+    <li>Add a session and press <b>Log in with device code</b>.</li>
+    <li>Open the link that appears, sign in to ChatGPT and enter the code. The status turns <b>ok</b> by itself.</li>
+    <li>Or import <code>~/.codex/auth.json</code> from a machine where you ran <code>codex login</code>.</li>
   </ol>
-  <p class="muted small">Use a separate ChatGPT account per session. Copying one auth.json into two sessions can rotate its refresh token and log both out.</p>
+  <p class="small muted">Use one ChatGPT account per session. Importing the same auth.json into two sessions can rotate its refresh token and log both out. If login fails with 403, the server's region is blocked by OpenAI: set <code>OPENAI_PROXY</code> in <code>.env</code> and restart the ml and worker containers.</p>
 </section>
 {{end}}
