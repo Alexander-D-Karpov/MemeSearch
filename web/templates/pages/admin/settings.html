@@ -1,6 +1,6 @@
 {{define "content"}}
 {{with .Data}}
-<h1>Settings</h1>
+<div class="page-head"><h1>Settings</h1></div>
 <form class="panel" id="settings-form">
   <h2>Analysis</h2>
   <label class="check"><input type="checkbox" name="codex_enabled"{{if .CodexEnabled}} checked{{end}}> Use Codex (subscription sessions)</label>

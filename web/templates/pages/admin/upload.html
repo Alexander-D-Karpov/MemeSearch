@@ -1,12 +1,12 @@
 {{define "content"}}
 {{with .Data}}
-<h1>Upload &amp; import</h1>
+<div class="page-head"><h1>Upload &amp; import</h1></div>
 
 <section class="panel">
   <h2>Files</h2>
   <p class="muted">Images, GIFs and videos, up to {{.MaxFileMB}} MB each. Drop thousands of files or whole folders; uploads run in parallel and duplicates are skipped.</p>
   <div class="dropzone" id="dropzone" tabindex="0">
-    <p><b>Drop files or folders here</b> or</p>
+    <p><b>Drop files or folders here</b></p><p class="small muted">or pick them</p>
     <div class="actions">
       <label class="btn">Choose files<input type="file" id="pick-files" multiple accept="image/*,video/*,.gif" hidden></label>
       <label class="btn">Choose folder<input type="file" id="pick-dir" webkitdirectory hidden></label>
@@ -24,9 +24,9 @@
 <section class="panel">
   <h2>ZIP archive</h2>
   <p class="muted">Upload a .zip up to {{.MaxZipGB}} GB. It is extracted on the server; nested folders are fine.</p>
-  <form id="zip-form">
+  <form id="zip-form" class="row">
     <input type="file" name="file" accept=".zip,application/zip" required>
-    <button class="btn primary">Upload &amp; import</button>
+    <button class="btn btn-primary" type="submit">Upload and import</button>
   </form>
   <div class="progress" id="zip-progress" hidden>
     <div class="bar"><div id="zip-bar"></div></div>

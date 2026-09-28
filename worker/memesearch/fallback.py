@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from openai import AsyncOpenAI, BadRequestError
+from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpx2Client
 
 from .config import Settings
 from .prompt import SCHEMA, SYSTEM, parse_response
@@ -25,6 +25,9 @@ class FallbackAnalyzer:
                 api_key=settings.fallback_api_key,
                 timeout=settings.fallback_timeout_seconds,
                 max_retries=3,
+                http_client=DefaultAsyncHttpx2Client(proxy=settings.openai_proxy)
+                if settings.openai_proxy and settings.fallback_use_proxy
+                else None,
             )
             if settings.fallback_configured
             else None
