@@ -23,8 +23,11 @@
   <div class="pick">
     <input type="checkbox" class="sel" value="{{.ID}}" aria-label="select #{{.ID}}">
     {{template "card" .}}
-    {{if .Error}}<p class="error small" title="{{.Error}}">{{truncate 80 .Error}}</p>{{end}}
+    <p class="small card-status"><span class="status-{{.Status}}">{{.Status}}</span>{{if ne .Status "done"}} · {{ago .UpdatedAt}}{{end}}{{if .OriginalName}} · {{truncate 28 .OriginalName}}{{end}}</p>
+    {{if .Error}}<p class="error small" title="{{.Error}}">{{truncate 120 .Error}}</p>{{end}}
   </div>
+  {{else}}
+  <p class="empty">No memes here.</p>
   {{end}}
 </div>
 {{if .NextBefore}}<p><a class="btn" href="/admin/memes?status={{.Status}}&kind={{.Kind}}&before={{.NextBefore}}">Next page →</a></p>{{end}}
