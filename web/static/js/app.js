@@ -10,6 +10,15 @@
     t._timer = setTimeout(() => { t.hidden = true; }, ms);
   };
 
+  document.addEventListener('error', (e) => {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement) || !img.closest('.card-media, .viewer')) return;
+    const box = document.createElement('span');
+    box.className = 'noimg';
+    box.textContent = 'Preview unavailable';
+    img.replaceWith(box);
+  }, true);
+
   const results = $('#results');
   const meta = $('#meta');
   const input = $('#q');

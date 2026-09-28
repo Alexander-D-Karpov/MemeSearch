@@ -205,6 +205,10 @@ button.link { background: none; border: 0; color: var(--accent); cursor: pointer
   min-width: 0;
 }
 .panel > h2 { margin-bottom: 2px; }
+.panel > .btn, .panel > button, .progress > .btn { align-self: flex-start; }
+.panel label.btn { display: inline-flex; flex-direction: row; font-size: 0.9rem; }
+.file-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.file-row #zip-name { flex: 1; min-width: 160px; overflow-wrap: anywhere; }
 .panel.narrow { max-width: 420px; width: 100%; margin: 48px auto; }
 .panel label { display: flex; flex-direction: column; gap: 6px; font-weight: 550; font-size: 0.92rem; }
 .panel label input:not([type="checkbox"]), .panel label textarea, .panel label select { width: 100%; font-weight: 400; }
@@ -235,7 +239,8 @@ label.check { flex-direction: row !important; align-items: center; gap: 8px; fon
 }
 .card:hover .card-media { border-color: var(--text); }
 .card-media img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.noimg { display: grid; place-items: center; height: 100%; color: var(--muted); font-family: var(--mono); }
+.noimg { display: grid; place-items: center; width: 100%; height: 100%; min-height: 160px; padding: 12px; text-align: center; color: var(--muted); font: 0.8rem/1.4 var(--mono); }
+.card-status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-tags { position: absolute; top: 8px; left: 8px; display: flex; gap: 4px; flex-wrap: wrap; }
 .tag {
   font: 600 0.68rem/1 var(--mono);
@@ -387,7 +392,7 @@ tr:last-child td { border-bottom: 0; }
 .progress .bar { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
 .progress .bar div { height: 100%; width: 0; background: var(--accent); }
 .progress p { font-variant-numeric: tabular-nums; font-size: 0.9rem; }
-.upload-log { max-height: 240px; overflow: auto; font: 0.82rem/1.5 var(--mono); padding-left: 18px; margin: 0; }
+.upload-log { max-height: 240px; overflow: auto; font-size: 0.88rem; list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
 .upload-log:empty { display: none; }
 
 /* admin memes */

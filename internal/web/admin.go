@@ -81,8 +81,15 @@ func (s *Server) pageUpload(w http.ResponseWriter, r *http.Request) {
 		"Imports":   imports,
 		"MaxFileMB": s.cfg.MaxFileBytes >> 20,
 		"MaxZipGB":  s.cfg.MaxZipBytes >> 30,
-		"InboxPath": filepath.Join(s.cfg.UploadDir, "inbox"),
+		"InboxPath": filepath.Join(inboxRoot(s.cfg.UploadDir), "inbox"),
 	}})
+}
+
+func inboxRoot(uploadDir string) string {
+	if host := strings.TrimSpace(os.Getenv("MEDIA_HOST_DIR")); strings.HasPrefix(host, "/") {
+		return host
+	}
+	return uploadDir
 }
 
 type AdminMemes struct {

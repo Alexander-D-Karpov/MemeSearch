@@ -71,7 +71,7 @@
 
     const render = () => {
       if (!state) return;
-      const pct = state.totalBytes ? Math.round((state.sentBytes / state.totalBytes) * 100) : 0;
+      const pct = state.totalBytes ? Math.min(100, Math.round((state.sentBytes / state.totalBytes) * 100)) : 0;
       bar.style.width = `${pct}%`;
       summary.textContent = `${state.done}/${state.total} files · ${state.added} added · ${state.dups} duplicates · ${state.errors} errors · ${pct}%`;
     };
@@ -90,15 +90,16 @@
       state.xhrs.add(xhr);
       const bulk = $('#bulk-priority').checked ? '?bulk=1' : '';
       xhr.open('POST', `/api/v1/admin/upload${bulk}`);
+      const batchBytes = batch.reduce((a, f) => a + f.size, 0);
       let last = 0;
       xhr.upload.onprogress = (ev) => {
-        state.sentBytes += ev.loaded - last;
-        last = ev.loaded;
+        const cur = ev.total ? (ev.loaded / ev.total) * batchBytes : 0;
+        state.sentBytes += cur - last;
+        last = cur;
         render();
       };
       xhr.onloadend = () => {
         state.xhrs.delete(xhr);
-        const batchBytes = batch.reduce((a, f) => a + f.size, 0);
         state.sentBytes += Math.max(0, batchBytes - last);
         state.done += batch.length;
         let data = null;
@@ -129,6 +130,7 @@
         xhrs: new Set(), cancelled: false, finished: false,
       };
       progress.hidden = false;
+      $('#upload-cancel').hidden = false;
       log.innerHTML = '';
       render();
       const batches = [];
@@ -148,6 +150,7 @@
       };
       await Promise.all(Array.from({ length: CONCURRENCY }, worker));
       state.finished = true;
+      $('#upload-cancel').hidden = true;
       logLine(state.cancelled ? 'Cancelled.' : `Finished: ${state.added} added, ${state.dups} duplicates, ${state.errors} errors.`);
       toast('Upload finished');
     };
@@ -183,6 +186,11 @@
 
   const zipForm = $('#zip-form');
   if (zipForm) {
+    const zipName = $('#zip-name');
+    zipForm.file.addEventListener('change', () => {
+      const f = zipForm.file.files[0];
+      zipName.textContent = f ? `${f.name} · ${(f.size / 1048576).toFixed(1)} MB` : 'No archive chosen';
+    });
     zipForm.addEventListener('submit', (e) => {
       e.preventDefault();
       const file = zipForm.file.files[0];

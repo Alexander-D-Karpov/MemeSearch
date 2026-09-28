@@ -24,8 +24,9 @@
 <section class="panel">
   <h2>ZIP archive</h2>
   <p class="muted">Upload a .zip up to {{.MaxZipGB}} GB. It is extracted on the server; nested folders are fine.</p>
-  <form id="zip-form" class="row">
-    <input type="file" name="file" accept=".zip,application/zip" required>
+  <form id="zip-form" class="file-row">
+    <label class="btn">Choose archive<input type="file" id="zip-file" name="file" accept=".zip,application/zip" required></label>
+    <span id="zip-name" class="muted">No archive chosen</span>
     <button class="btn btn-primary" type="submit">Upload and import</button>
   </form>
   <div class="progress" id="zip-progress" hidden>
