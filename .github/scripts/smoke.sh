@@ -56,6 +56,7 @@ page=$(curl -fsS "$BASE/m/$ID") || fail "meme page"
 echo "$page" | grep -q "<meta property=\"og:image\" content=\"$BASE/media/originals/" || fail "og:image missing"
 echo "$page" | grep -q '<meta name="twitter:card" content="summary_large_image">' || fail "twitter card missing"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/m/$ID/og.jpg")" = "404" ] || fail "og.jpg without thumb"
+[ "$(curl -s -o /dev/null -w '%{content_type}' "$BASE/m/$ID/photo.jpg")" = "image/jpeg" ] || fail "photo.jpg from png original"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/?q=%D0%BA%D0%BE%D1%82")" = "200" ] || fail "search page"
 
 code=$(curl -s -o "$WORK/ch.json" -w '%{http_code}' -H "$AUTH" -H 'Content-Type: application/json' \

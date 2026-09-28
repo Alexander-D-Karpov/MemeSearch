@@ -1,6 +1,9 @@
 package web
 
 import (
+	"bytes"
+	"image"
+	"image/jpeg"
 	"testing"
 
 	"github.com/Alexander-D-Karpov/MemeSearch/internal/config"
@@ -67,5 +70,20 @@ func TestChannelUsername(t *testing.T) {
 		if got, err := channelUsername(in); err == nil {
 			t.Errorf("channelUsername(%q) = %q, want error", in, got)
 		}
+	}
+}
+
+func TestEncodeJPEGScales(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 4000, 1000))
+	b, err := encodeJPEG(src, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := jpeg.DecodeConfig(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Width != 2048 || cfg.Height != 512 {
+		t.Fatalf("got %dx%d, want 2048x512", cfg.Width, cfg.Height)
 	}
 }

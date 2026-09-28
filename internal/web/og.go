@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/draw"
 	"image/jpeg"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +17,8 @@ import (
 	_ "image/gif"
 	_ "image/png"
 
+	_ "golang.org/x/image/bmp"
+	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
 	"github.com/Alexander-D-Karpov/MemeSearch/internal/store"
@@ -23,6 +26,8 @@ import (
 
 const (
 	ogMaxDirectBytes = 5 << 20
+	photoMaxSide     = 2048
+	maxDecodePixels  = 40_000_000
 	thumbMaxW        = 480
 	thumbMaxH        = 1440
 )
@@ -90,38 +95,97 @@ func clip(s string, n int) string {
 }
 
 func (s *Server) memeOGImage(w http.ResponseWriter, r *http.Request) {
+	s.serveJPEG(w, r, false)
+}
+
+func (s *Server) memePhoto(w http.ResponseWriter, r *http.Request) {
+	s.serveJPEG(w, r, true)
+}
+
+func (s *Server) serveJPEG(w http.ResponseWriter, r *http.Request, full bool) {
 	m, err := s.visibleMeme(r)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && m.ThumbPath == "") {
+	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return
 	}
 	if err != nil {
-		slog.Error("og image", "err", err)
+		slog.Error("jpeg preview", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	f, err := os.Open(filepath.Join(s.cfg.UploadDir, filepath.FromSlash(m.ThumbPath)))
-	if err != nil {
+	var src image.Image
+	if full && m.Kind != "video" {
+		src, err = s.decodeMedia(m.FilePath)
+		if err != nil {
+			slog.Debug("jpeg preview original", "id", m.ID, "err", err)
+		}
+	}
+	if src == nil && m.ThumbPath != "" {
+		src, err = s.decodeMedia(m.ThumbPath)
+	}
+	if src == nil {
+		if err != nil {
+			slog.Warn("jpeg preview decode", "id", m.ID, "err", err)
+		}
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
-	src, _, err := image.Decode(f)
+	b, err := encodeJPEG(src, photoMaxSide)
 	if err != nil {
-		slog.Warn("og image decode", "id", m.ID, "err", err)
-		http.NotFound(w, r)
-		return
-	}
-	dst := image.NewRGBA(src.Bounds())
-	draw.Draw(dst, dst.Bounds(), image.White, image.Point{}, draw.Src)
-	draw.Draw(dst, dst.Bounds(), src, src.Bounds().Min, draw.Over)
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 85}); err != nil {
 		http.Error(w, "encode error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	w.Write(buf.Bytes())
+	w.Write(b)
+}
+
+func (s *Server) decodeMedia(rel string) (image.Image, error) {
+	if rel == "" {
+		return nil, errors.New("no file")
+	}
+	f, err := os.Open(filepath.Join(s.cfg.UploadDir, filepath.FromSlash(rel)))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Width*cfg.Height > maxDecodePixels {
+		return nil, errors.New("image too large to convert")
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	img, _, err := image.Decode(f)
+	return img, err
+}
+
+func encodeJPEG(src image.Image, maxSide int) ([]byte, error) {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if scale := float64(maxSide) / float64(max(w, h)); scale < 1 {
+		w, h = max(1, int(float64(w)*scale)), max(1, int(float64(h)*scale))
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(dst, dst.Bounds(), image.White, image.Point{}, draw.Src)
+	if w == b.Dx() && h == b.Dy() {
+		draw.Draw(dst, dst.Bounds(), src, b.Min, draw.Over)
+	} else {
+		xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, draw.Over, nil)
+	}
+	var buf bytes.Buffer
+	for _, q := range []int{88, 75, 60} {
+		buf.Reset()
+		if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: q}); err != nil {
+			return nil, err
+		}
+		if buf.Len() <= ogMaxDirectBytes {
+			break
+		}
+	}
+	return buf.Bytes(), nil
 }

@@ -15,6 +15,10 @@ from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
+    InlineQuery,
+    InlineQueryResultGif,
+    InlineQueryResultPhoto,
+    InlineQueryResultVideo,
     Message,
     MessageOriginChannel,
     MessageOriginChat,
@@ -33,6 +37,9 @@ settings = get_settings()
 router = Router()
 
 NOTIFY_TTL = 6 * 3600
+INLINE_PAGE = 30
+PHOTO_URL_MAX = 5 << 20
+FILE_URL_MAX = 20 << 20
 
 
 class Ctx:
@@ -100,10 +107,12 @@ async def cmd_help(message: Message) -> None:
     if not is_admin(message):
         await message.answer(f"Your id is <code>{message.from_user.id}</code>. This bot is private.")
         return
+    me = await message.bot.me()
     await message.answer(
         "Forward or send memes (photos, GIFs, videos, image/video files) and they will be added and analyzed.\n"
         "The caption is stored as extra context.\n\n"
         "/search &lt;query&gt; — search\n/stats — counts\n/reprocess &lt;id&gt; — analyze again\n"
+        f"In any chat type @{html.escape(me.username or 'this_bot')} and a query to send a meme.\n"
         f"Web: {html.escape(settings.public_url)}"
     )
 
@@ -138,6 +147,86 @@ async def cmd_search(message: Message, command: CommandObject) -> None:
         return
     lines = [f'<a href="{meme_url(m["id"])}">#{m["id"]}</a> {html.escape(m["title"] or "")}' for m in memes]
     await message.answer("\n".join(lines), disable_web_page_preview=True)
+
+
+def inline_result(m: dict):
+    base = settings.public_url.rstrip("/")
+    page = f"{base}/m/{m['id']}"
+
+    def absolute(u: str) -> str:
+        return base + u if u.startswith("/") else u
+
+    url = absolute(m.get("url") or "")
+    thumb = f"{page}/og.jpg" if m.get("thumb_url") and m.get("thumb_url") != m.get("url") else ""
+    title = (m.get("title") or "").strip() or f"Meme #{m['id']}"
+    desc = ((m.get("text") or m.get("description") or "").strip().replace("\n", " "))[:200]
+    size = m.get("size_bytes") or 0
+    w, h = m.get("width") or None, m.get("height") or None
+    seconds = max(1, round((m.get("duration_ms") or 0) / 1000)) if m.get("duration_ms") else None
+    rid = str(m["id"])
+    if m["kind"] == "image":
+        direct = m.get("ext") in ("jpg", "jpeg") and 0 < size <= PHOTO_URL_MAX
+        photo = url if direct else f"{page}/photo.jpg"
+        return InlineQueryResultPhoto(
+            id=rid,
+            photo_url=photo,
+            thumbnail_url=thumb or photo,
+            photo_width=w,
+            photo_height=h,
+            title=title,
+            description=desc,
+        )
+    if m["kind"] == "gif" and 0 < size <= FILE_URL_MAX and thumb:
+        return InlineQueryResultGif(
+            id=rid,
+            gif_url=url,
+            gif_width=w,
+            gif_height=h,
+            gif_duration=seconds,
+            thumbnail_url=thumb,
+            thumbnail_mime_type="image/jpeg",
+            title=title,
+        )
+    if m["kind"] == "video" and m.get("mime") == "video/mp4" and 0 < size <= FILE_URL_MAX and thumb:
+        return InlineQueryResultVideo(
+            id=rid,
+            video_url=url,
+            mime_type="video/mp4",
+            thumbnail_url=thumb,
+            title=title,
+            description=desc,
+            video_width=w,
+            video_height=h,
+            video_duration=seconds,
+        )
+    return None
+
+
+@router.inline_query()
+async def inline_search(query: InlineQuery) -> None:
+    if not settings.telegram_inline_public and query.from_user.id not in settings.admin_ids:
+        await query.answer([], cache_time=300, is_personal=True)
+        return
+    offset = int(query.offset) if query.offset.isdigit() else 0
+    q = query.query.strip()
+    params: dict = {"limit": INLINE_PAGE, "offset": offset}
+    if q:
+        params["q"] = q
+    try:
+        resp = await ctx.http.get("/api/v1/search", params=params)
+        resp.raise_for_status()
+        memes = resp.json().get("memes") or []
+    except httpx.HTTPError as exc:
+        log.warning("inline search %r failed: %s", q, exc)
+        await query.answer([], cache_time=5, is_personal=True)
+        return
+    results = [r for r in map(inline_result, memes) if r is not None]
+    await query.answer(
+        results,
+        cache_time=30 if q else 60,
+        is_personal=False,
+        next_offset=str(offset + INLINE_PAGE) if len(memes) == INLINE_PAGE else "",
+    )
 
 
 @router.message(Command("reprocess"))

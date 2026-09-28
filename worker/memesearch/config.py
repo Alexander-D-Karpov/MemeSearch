@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     telegram_api_local: bool = False
     telegram_proxy: str | None = None
     bot_max_file_mb: int = 20
+    telegram_inline_public: bool = True
 
     channel_poll_minutes: int = 30
     channel_max_video_seconds: int = 180
