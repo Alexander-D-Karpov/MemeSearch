@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     telegram_proxy: str | None = None
     bot_max_file_mb: int = 20
     telegram_inline_public: bool = True
+    telegram_cache_chat_id: int | None = None
+    telegram_cache_interval: float = 1.2
 
     channel_poll_minutes: int = 30
     channel_max_video_seconds: int = 180
@@ -93,6 +95,7 @@ class Settings(BaseSettings):
         "telegram_api_url",
         "telegram_proxy",
         "telegram_web_proxy",
+        "telegram_cache_chat_id",
         mode="before",
     )
     @classmethod
@@ -110,6 +113,13 @@ class Settings(BaseSettings):
     @property
     def admin_ids(self) -> set[int]:
         return {int(x) for x in self.telegram_admin_ids.replace(" ", "").split(",") if x}
+
+    @property
+    def cache_chat_id(self) -> int | None:
+        if self.telegram_cache_chat_id:
+            return self.telegram_cache_chat_id
+        ids = [int(x) for x in self.telegram_admin_ids.replace(" ", "").split(",") if x]
+        return ids[0] if ids else None
 
     @property
     def web_proxy(self) -> str | None:

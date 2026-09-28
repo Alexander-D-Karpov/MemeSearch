@@ -13,9 +13,14 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
+    FSInputFile,
     InlineQuery,
+    InlineQueryResultCachedGif,
+    InlineQueryResultCachedPhoto,
+    InlineQueryResultCachedVideo,
     InlineQueryResultGif,
     InlineQueryResultPhoto,
     InlineQueryResultVideo,
@@ -30,7 +35,7 @@ from redis.asyncio import Redis
 from .config import get_settings
 from .db import connect
 from .rqueue import EVENTS, STREAM_HIGH, JobQueue
-from .storage import Storage, TooLarge, Unsupported
+from .storage import Storage, TooLarge, Unsupported, safe_join
 
 log = logging.getLogger("memesearch.bot")
 settings = get_settings()
@@ -40,6 +45,10 @@ NOTIFY_TTL = 6 * 3600
 INLINE_PAGE = 30
 PHOTO_URL_MAX = 5 << 20
 FILE_URL_MAX = 20 << 20
+PHOTO_UPLOAD_MAX = 10 << 20
+UPLOAD_MAX = 50 << 20
+PHOTO_EXTS = {"jpg", "jpeg", "png", "webp"}
+CACHE_PRIO = "ms:tg:cache:prio"
 
 
 class Ctx:
@@ -149,7 +158,24 @@ async def cmd_search(message: Message, command: CommandObject) -> None:
     await message.answer("\n".join(lines), disable_web_page_preview=True)
 
 
-def inline_result(m: dict):
+def cached_result(m: dict, file_id: str, file_type: str):
+    rid = str(m["id"])
+    title = (m.get("title") or "").strip() or f"Meme #{m['id']}"
+    desc = ((m.get("text") or m.get("description") or "").strip().replace("\n", " "))[:200]
+    if file_type == "photo":
+        return InlineQueryResultCachedPhoto(id=rid, photo_file_id=file_id, title=title, description=desc)
+    if file_type == "gif":
+        return InlineQueryResultCachedGif(id=rid, gif_file_id=file_id, title=title)
+    if file_type == "video":
+        return InlineQueryResultCachedVideo(id=rid, video_file_id=file_id, title=title, description=desc)
+    return None
+
+
+def inline_result(m: dict, file_id: str = "", file_type: str = ""):
+    if file_id:
+        cached = cached_result(m, file_id, file_type)
+        if cached is not None:
+            return cached
     base = settings.public_url.rstrip("/")
     page = f"{base}/m/{m['id']}"
 
@@ -202,6 +228,111 @@ def inline_result(m: dict):
     return None
 
 
+async def file_cache(ids: list[int]) -> dict[int, tuple[str, str]]:
+    if not ids:
+        return {}
+    rows = await ctx.pool.fetch("SELECT id, tg_file_id, tg_file_type FROM memes WHERE id = ANY($1) AND tg_file_id <> ''", ids)
+    return {r["id"]: (r["tg_file_id"], r["tg_file_type"]) for r in rows}
+
+
+async def upload(bot: Bot, chat_id: int, m: dict) -> tuple[str, str]:
+    src = safe_join(settings.upload_dir, m["file_path"])
+    thumb = safe_join(settings.upload_dir, m["thumb_path"]) if m["thumb_path"] else None
+    limit = 2000 << 20 if settings.telegram_api_local else UPLOAD_MAX
+    common = {"disable_notification": True}
+    if m["kind"] == "image":
+        path = src if m["ext"] in PHOTO_EXTS and m["size_bytes"] <= PHOTO_UPLOAD_MAX else thumb
+        if path is None:
+            raise ValueError("no photo-compatible file")
+        msg = await bot.send_photo(chat_id, FSInputFile(path), **common)
+        file_id, file_type = msg.photo[-1].file_id, "photo"
+    elif m["size_bytes"] > limit:
+        raise ValueError(f"file is larger than {limit >> 20} MB")
+    elif m["kind"] == "gif":
+        msg = await bot.send_animation(chat_id, FSInputFile(src), **common)
+        file_id, file_type = (msg.animation or msg.document).file_id, "gif"
+    else:
+        msg = await bot.send_video(
+            chat_id,
+            FSInputFile(src),
+            width=m["width"] or None,
+            height=m["height"] or None,
+            duration=round(m["duration_ms"] / 1000) or None,
+            thumbnail=FSInputFile(thumb) if thumb else None,
+            supports_streaming=True,
+            **common,
+        )
+        if msg.video is not None:
+            file_id, file_type = msg.video.file_id, "video"
+        elif msg.animation is not None:
+            file_id, file_type = msg.animation.file_id, "gif"
+        else:
+            raise ValueError("telegram did not accept the file as a video")
+    try:
+        await bot.delete_message(chat_id, msg.message_id)
+    except TelegramAPIError:
+        pass
+    return file_id, file_type
+
+
+async def cache_one(bot: Bot, chat_id: int, m: dict) -> None:
+    for _ in range(3):
+        try:
+            file_id, file_type = await upload(bot, chat_id, m)
+        except TelegramRetryAfter as exc:
+            await asyncio.sleep(exc.retry_after + 1)
+            continue
+        except (TelegramForbiddenError, TelegramNetworkError):
+            raise
+        except (TelegramAPIError, ValueError, OSError) as exc:
+            if "chat not found" in str(exc).lower():
+                raise CacheChatUnavailable(str(exc)) from exc
+            log.info("cannot cache meme %s in telegram: %s", m["id"], exc)
+            await ctx.pool.execute("UPDATE memes SET tg_cache_error=$2 WHERE id=$1", m["id"], str(exc)[:500] or "error")
+            return
+        await ctx.pool.execute(
+            "UPDATE memes SET tg_file_id=$2, tg_file_type=$3, tg_cache_error='' WHERE id=$1", m["id"], file_id, file_type
+        )
+        return
+
+
+class CacheChatUnavailable(Exception):
+    pass
+
+
+CACHE_COLS = "id, kind, ext, file_path, thumb_path, size_bytes, width, height, duration_ms"
+CACHE_WHERE = "tg_file_id = '' AND tg_cache_error = '' AND status = 'done' AND NOT hidden"
+
+
+async def cacher(bot: Bot) -> None:
+    chat_id = settings.cache_chat_id
+    if not chat_id:
+        log.warning("no TELEGRAM_CACHE_CHAT_ID or admin id: inline results use media links only")
+        return
+    while True:
+        try:
+            prio = [int(i) for i in await ctx.redis.spop(CACHE_PRIO, 30) or []]
+            rows = []
+            if prio:
+                rows = await ctx.pool.fetch(f"SELECT {CACHE_COLS} FROM memes WHERE id = ANY($1) AND {CACHE_WHERE}", prio)
+            if not rows:
+                rows = await ctx.pool.fetch(f"SELECT {CACHE_COLS} FROM memes WHERE {CACHE_WHERE} ORDER BY id DESC LIMIT 30")
+            if not rows:
+                await asyncio.sleep(30)
+                continue
+            for m in rows:
+                await cache_one(bot, chat_id, dict(m))
+                await asyncio.sleep(settings.telegram_cache_interval)
+        except asyncio.CancelledError:
+            raise
+        except (TelegramForbiddenError, CacheChatUnavailable) as exc:
+            log.warning("cannot post to cache chat %s (%s); send /start to the bot or add it to the channel", chat_id, exc)
+            await asyncio.sleep(300)
+        except Exception as exc:
+            log.warning("telegram cache: %s", exc)
+            await asyncio.sleep(15)
+
+
 @router.inline_query()
 async def inline_search(query: InlineQuery) -> None:
     if not settings.telegram_inline_public and query.from_user.id not in settings.admin_ids:
@@ -220,7 +351,11 @@ async def inline_search(query: InlineQuery) -> None:
         log.warning("inline search %r failed: %s", q, exc)
         await query.answer([], cache_time=5, is_personal=True)
         return
-    results = [r for r in map(inline_result, memes) if r is not None]
+    cache = await file_cache([m["id"] for m in memes])
+    missing = [m["id"] for m in memes if m["id"] not in cache]
+    if missing:
+        await ctx.redis.sadd(CACHE_PRIO, *missing)
+    results = [r for m in memes if (r := inline_result(m, *cache.get(m["id"], ("", "")))) is not None]
     await query.answer(
         results,
         cache_time=30 if q else 60,
@@ -366,10 +501,12 @@ async def run() -> None:
     dp = Dispatcher()
     dp.include_router(router)
     notify = asyncio.create_task(notifier(bot))
+    uploader = asyncio.create_task(cacher(bot))
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         notify.cancel()
+        uploader.cancel()
         await ctx.http.aclose()
         await ctx.pool.close()
 
