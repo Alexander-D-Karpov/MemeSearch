@@ -74,7 +74,7 @@ The worker and ml containers run under `worker/seccomp-userns.json` (Docker defa
 - Each imported meme links to its post, and the post text is passed to the analysis as the caption.
 - Dedup: exact file (sha256) or same picture (256-bit perceptual hash within `CHANNEL_DEDUP_DISTANCE` bits, compared against the whole library) is not added again; the post link is attached to the existing meme instead, so a meme can show several sources.
 - Videos longer than `CHANNEL_MAX_VIDEO_SECONDS` and posts Telegram marks as "media too big" are skipped. Files over `CHANNEL_MAX_FILE_MB` too.
-- If t.me is blocked from the server, set `TELEGRAM_WEB_PROXY` (or `TELEGRAM_PROXY`).
+- If t.me is blocked from the server (status `failed`, "cannot reach https://t.me"), set `TELEGRAM_WEB_PROXY`. Without it `TELEGRAM_PROXY`, then `OPENAI_PROXY` is used. http:// and socks5:// both work.
 
 ## Link previews
 
