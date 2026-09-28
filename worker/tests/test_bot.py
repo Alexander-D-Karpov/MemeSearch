@@ -1,4 +1,11 @@
-from aiogram.types import InlineQueryResultGif, InlineQueryResultPhoto, InlineQueryResultVideo
+from aiogram.types import (
+    InlineQueryResultCachedGif,
+    InlineQueryResultCachedPhoto,
+    InlineQueryResultCachedVideo,
+    InlineQueryResultGif,
+    InlineQueryResultPhoto,
+    InlineQueryResultVideo,
+)
 
 from memesearch.bot import inline_result
 
@@ -44,3 +51,10 @@ def test_unsendable_videos_are_skipped():
     assert inline_result(meme(kind="video", ext="webm", mime="video/webm")) is None
     assert inline_result(meme(kind="video", ext="mp4", mime="video/mp4", size_bytes=50 << 20)) is None
     assert inline_result(meme(kind="video", ext="mp4", mime="video/mp4", thumb_url="")) is None
+
+
+def test_cached_file_ids_win_over_links():
+    assert isinstance(inline_result(meme(ext="png"), "AgAC", "photo"), InlineQueryResultCachedPhoto)
+    assert isinstance(inline_result(meme(kind="gif"), "CgAC", "gif"), InlineQueryResultCachedGif)
+    v = inline_result(meme(kind="video", mime="video/webm", size_bytes=40 << 20), "BAAC", "video")
+    assert isinstance(v, InlineQueryResultCachedVideo) and v.video_file_id == "BAAC"
