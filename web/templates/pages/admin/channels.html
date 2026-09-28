@@ -1,0 +1,38 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1>Telegram channels</h1>
+    <p>Public channels are read from their web preview at t.me/s/name. New posts are fetched on a schedule. A meme that is already in the library, or looks the same, is not added again: the post link is added to that meme as another source. Videos longer than the configured limit are skipped.</p>
+  </div>
+</div>
+
+<form id="channel-add" class="row">
+  <input name="channel" placeholder="@channel or https://t.me/channel" required autocomplete="off">
+  <input name="backfill_limit" type="number" min="0" value="1000" class="prio" aria-label="How many old posts to import" title="How many old posts to import on the first run, 0 for the whole history">
+  <button class="btn btn-primary" type="submit">Add channel</button>
+</form>
+
+{{if .Data}}
+<div class="table-wrap">
+  <table>
+    <tr><th>Channel</th><th>Status</th><th>Last post</th><th>Added</th><th>Duplicates</th><th>Skipped</th><th>Failed</th><th>Checked</th><th>Enabled</th><th></th></tr>
+    {{range .Data}}
+    <tr data-channel="{{.ID}}">
+      <td><a href="https://t.me/{{.Username}}" rel="noopener" target="_blank">@{{.Username}}</a>{{with .Title}}<br><span class="small muted">{{.}}</span>{{end}}</td>
+      <td class="status-{{.Status}}">{{.Status}}{{with .Error}}<br><span class="small error">{{truncate 200 .}}</span>{{end}}</td>
+      <td>{{if .LastPostID}}<a href="https://t.me/{{.Username}}/{{.LastPostID}}" rel="noopener" target="_blank">{{.LastPostID}}</a>{{else}}—{{end}}</td>
+      <td>{{.Added}}</td><td>{{.Duplicates}}</td><td>{{.Skipped}}</td><td>{{.Failed}}</td>
+      <td>{{ago .LastPolledAt}}</td>
+      <td><input type="checkbox" data-channel-enabled{{if .Enabled}} checked{{end}} aria-label="Enabled"></td>
+      <td class="actions">
+        <button class="btn" type="button" data-api="POST /api/v1/admin/channels/{{.ID}}/poll" data-reload>Check now</button>
+        <button class="btn danger" type="button" data-api="DELETE /api/v1/admin/channels/{{.ID}}" data-confirm="Remove @{{.Username}}? Imported memes stay." data-reload>Remove</button>
+      </td>
+    </tr>
+    {{end}}
+  </table>
+</div>
+{{else}}
+<p class="empty">No channels yet.</p>
+{{end}}
+{{end}}

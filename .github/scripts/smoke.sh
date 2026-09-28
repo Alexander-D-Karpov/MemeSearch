@@ -52,7 +52,20 @@ for q in "кубернетес" "кубернетис" "kubernetes"; do
   echo "$ids" | grep -q "\b$ID\b" || fail "search '$q' returned $ids"
 done
 
-[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/m/$ID")" = "200" ] || fail "meme page"
+page=$(curl -fsS "$BASE/m/$ID") || fail "meme page"
+echo "$page" | grep -q "<meta property=\"og:image\" content=\"$BASE/media/originals/" || fail "og:image missing"
+echo "$page" | grep -q '<meta name="twitter:card" content="summary_large_image">' || fail "twitter card missing"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/m/$ID/og.jpg")" = "404" ] || fail "og.jpg without thumb"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/?q=%D0%BA%D0%BE%D1%82")" = "200" ] || fail "search page"
+
+code=$(curl -s -o "$WORK/ch.json" -w '%{http_code}' -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"channel":"https://t.me/s/Some_Memes","backfill_limit":10}' "$BASE/api/v1/admin/channels")
+[ "$code" = "201" ] || fail "add channel: $code $(cat "$WORK/ch.json")"
+[ "$(json 'd["username"]' < "$WORK/ch.json")" = "some_memes" ] || fail "channel name: $(cat "$WORK/ch.json")"
+code=$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" -H 'Content-Type: application/json' -d '{"channel":"@some_memes"}' "$BASE/api/v1/admin/channels")
+[ "$code" = "409" ] || fail "duplicate channel: $code"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$BASE/admin/channels")" = "200" ] || fail "channels page"
+psql "$DATABASE_URL" -qc "INSERT INTO meme_sources (meme_id, url, source, post_id) VALUES ($ID, 'https://t.me/some_memes/5', 'telegram', 5)"
+curl -fsS "$BASE/m/$ID" | grep -q 'https://t.me/some_memes/5' || fail "source link missing on meme page"
 
 echo "smoke test passed"

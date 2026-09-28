@@ -23,9 +23,22 @@ type Page struct {
 	Query       string
 	Kind        string
 	Canonical   string
-	OGImage     string
+	OG          OpenGraph
 	Nav         string
 	Data        any
+}
+
+type OpenGraph struct {
+	Type      string
+	Image     string
+	ImageType string
+	ImageW    int
+	ImageH    int
+	ImageAlt  string
+	Video     string
+	VideoType string
+	VideoW    int
+	VideoH    int
 }
 
 func (s *Server) funcs() template.FuncMap {
@@ -163,6 +176,8 @@ func navKey(r *http.Request) string {
 		return "failed"
 	case strings.HasPrefix(p, "/admin/memes") || strings.HasPrefix(p, "/admin/m/"):
 		return "memes"
+	case p == "/admin/channels":
+		return "channels"
 	case p == "/admin/codex":
 		return "codex"
 	case p == "/admin/settings":

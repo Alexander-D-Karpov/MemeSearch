@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     telegram_proxy: str | None = None
     bot_max_file_mb: int = 20
 
+    channel_poll_minutes: int = 30
+    channel_max_video_seconds: int = 180
+    channel_max_file_mb: int = 100
+    channel_dedup_distance: int = 12
+    channel_page_delay: float = 1.5
+    telegram_web_proxy: str | None = None
+    telegram_web_url: str = "https://t.me"
+
     @field_validator(
         "codex_model",
         "openai_proxy",
@@ -83,6 +91,7 @@ class Settings(BaseSettings):
         "telegram_bot_token",
         "telegram_api_url",
         "telegram_proxy",
+        "telegram_web_proxy",
         mode="before",
     )
     @classmethod
@@ -100,6 +109,10 @@ class Settings(BaseSettings):
     @property
     def admin_ids(self) -> set[int]:
         return {int(x) for x in self.telegram_admin_ids.replace(" ", "").split(",") if x}
+
+    @property
+    def web_proxy(self) -> str | None:
+        return self.telegram_web_proxy or self.telegram_proxy
 
     @property
     def fallback_configured(self) -> bool:

@@ -8,14 +8,16 @@ import socket
 
 from redis.asyncio import Redis
 
+from .channels import ChannelImporter, claim_due
 from .codex import CodexPool, CodexRuntime
 from .config import get_settings
 from .db import connect
 from .fallback import FallbackAnalyzer
 from .importer import Importer
+from .media import thumb_hash
 from .pipeline import MLClient, Pipeline
 from .rqueue import STREAM_HIGH, STREAM_LOW, JobQueue, Message
-from .storage import Storage
+from .storage import Storage, safe_join
 from .transcribe import Transcriber
 
 log = logging.getLogger("memesearch.worker")
@@ -52,7 +54,9 @@ class Worker:
         )
         storage = Storage(self.s.upload_dir, self.pool, self.queue, self.s.max_file_mb << 20)
         self.importer = Importer(self.pool, storage, self.redis)
+        self.channels = ChannelImporter(self.s, self.pool, storage, self.redis)
         self.active = 0
+        self.phash_cursor = 0
         self.changed = asyncio.Condition()
 
     async def handle(self, msg: Message) -> None:
@@ -62,6 +66,8 @@ class Worker:
                 await self.pipeline.handle(msg.job)
             elif kind == "import":
                 await self.importer.run(int(msg.job["job_id"]))
+            elif kind == "channel":
+                await self.channels.run(int(msg.job["id"]), float(msg.job.get("at") or 0))
             else:
                 log.warning("unknown job %s", msg.job)
         except Exception:
@@ -102,6 +108,10 @@ class Worker:
                 await self.queue.promote_due()
                 if tick % 60 == 0:
                     await self.recover()
+                if tick % 12 == 0:
+                    await self.poll_channels()
+                if tick % 60 == 30:
+                    await self.backfill_phash()
             except Exception as exc:
                 log.warning("maintenance: %s", exc)
             tick += 1
@@ -135,6 +145,27 @@ class Worker:
         for job_id in await self._unlocked([j["id"] for j in jobs], "ms:lock:import:"):
             log.info("resuming orphaned import %s", job_id)
             await self.queue.push(STREAM_HIGH, {"type": "import", "job_id": job_id})
+
+    async def poll_channels(self) -> None:
+        ids = await claim_due(self.pool, self.s.channel_poll_minutes)
+        if ids:
+            await self.queue.push(STREAM_HIGH, *({"type": "channel", "id": i} for i in ids))
+
+    async def backfill_phash(self) -> None:
+        rows = await self.pool.fetch(
+            "SELECT id, thumb_path FROM memes WHERE phash IS NULL AND thumb_path <> '' AND id > $1 ORDER BY id LIMIT 500",
+            self.phash_cursor,
+        )
+        for r in rows:
+            self.phash_cursor = r["id"]
+            try:
+                h = await asyncio.to_thread(thumb_hash, safe_join(self.s.upload_dir, r["thumb_path"]))
+            except Exception as exc:
+                log.debug("phash %s: %s", r["id"], exc)
+                continue
+            await self.pool.execute("UPDATE memes SET phash=$2::text::bit(256) WHERE id=$1 AND phash IS NULL", r["id"], h)
+        if not rows:
+            self.phash_cursor = 0
 
     async def _unlocked(self, ids: list[int], prefix: str) -> list[int]:
         if not ids:

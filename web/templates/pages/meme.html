@@ -54,6 +54,15 @@
     </section>
     {{end}}
 
+    {{with .Data.Sources}}
+    <section>
+      <span class="label">{{if eq (len .) 1}}Source{{else}}Sources{{end}}</span>
+      <ul class="sources">
+        {{range .}}<li><a href="{{.URL}}" rel="noopener nofollow" target="_blank">{{if .Channel}}@{{.Channel}}{{if .PostID}} / {{.PostID}}{{end}}{{else}}{{.URL}}{{end}}</a>{{with .PostedAt}} <span class="muted small">{{ago .}}</span>{{end}}</li>{{end}}
+      </ul>
+    </section>
+    {{end}}
+
     <dl class="facts">
       {{if $m.Template}}<dt>Template</dt><dd><a href="/?q={{q $m.Template}}">{{$m.Template}}</a></dd>{{end}}
       <dt>Type</dt><dd>{{$m.Kind}}{{if $m.DurationMs}}, {{dur $m.DurationMs}}{{end}}</dd>
