@@ -15,13 +15,13 @@
 {{if .Data}}
 <div class="table-wrap">
   <table>
-    <tr><th>Channel</th><th>Status</th><th>Last post</th><th>Added</th><th>Duplicates</th><th>Skipped</th><th>Failed</th><th>Checked</th><th>Enabled</th><th></th></tr>
+    <tr><th>Channel</th><th>Status</th><th>Last post</th><th>Added</th><th>Duplicates</th><th>Skipped</th><th title="Ads and posts that are not memes">Filtered</th><th>Failed</th><th>Checked</th><th>Enabled</th><th></th></tr>
     {{range .Data}}
     <tr data-channel="{{.ID}}">
       <td><a href="https://t.me/{{.Username}}" rel="noopener" target="_blank">@{{.Username}}</a>{{with .Title}}<br><span class="small muted">{{.}}</span>{{end}}</td>
       <td class="status-{{.Status}}">{{.Status}}{{with .Error}}<br><span class="small error">{{truncate 200 .}}</span>{{end}}</td>
       <td>{{if .LastPostID}}<a href="https://t.me/{{.Username}}/{{.LastPostID}}" rel="noopener" target="_blank">{{.LastPostID}}</a>{{else}}—{{end}}</td>
-      <td>{{.Added}}</td><td>{{.Duplicates}}</td><td>{{.Skipped}}</td><td>{{.Failed}}</td>
+      <td>{{.Added}}</td><td>{{.Duplicates}}</td><td>{{.Skipped}}</td><td>{{.Filtered}}</td><td>{{.Failed}}</td>
       <td>{{ago .LastPolledAt}}</td>
       <td><input type="checkbox" data-channel-enabled{{if .Enabled}} checked{{end}} aria-label="Enabled"></td>
       <td class="actions">

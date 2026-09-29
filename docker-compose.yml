@@ -4,6 +4,7 @@ x-python: &python
   build: ./worker
   image: memesearch-worker:latest
   restart: unless-stopped
+  init: true
   env_file: .env
   volumes:
     - ${MEDIA_HOST_DIR:-./data/media}:/media
@@ -83,7 +84,7 @@ services:
     command: ["python", "-m", "memesearch.worker"]
     stop_grace_period: 45s
     mem_limit: ${WORKER_MEM_LIMIT:-6g}
-    pids_limit: 1024
+    pids_limit: 4096
 
   bot:
     <<: *python

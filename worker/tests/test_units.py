@@ -98,7 +98,9 @@ def test_embedding_text_joins_fields():
         ("You've hit your usage limit. Try again at 5pm.", "limit"),
         ("429 Too Many Requests", "limit"),
         ("401 Unauthorized: refresh token expired", "auth"),
-        ("stream disconnected before completion", "other"),
+        ("stream disconnected before completion", "transient"),
+        ("[Errno 11] Resource temporarily unavailable", "transient"),
+        ("model returned invalid JSON", "other"),
     ],
 )
 def test_classify(message, kind):

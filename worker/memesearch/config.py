@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     worker_concurrency: int = 4
     max_attempts: int = 3
     job_timeout_seconds: int = 900
+    max_transient_retries: int = 12
+    auto_retry_failed: int = 3
     shutdown_drain_seconds: int = 15
     max_file_mb: int = 512
 
@@ -33,6 +35,7 @@ class Settings(BaseSettings):
     codex_concurrency: int = 2
     codex_per_session: int = 2
     codex_timeout_seconds: int = 300
+    codex_runtime_threads: int = 2
     codex_default_cooldown_minutes: int = 30
     codex_login_timeout_seconds: int = 900
     openai_proxy: str | None = None
@@ -81,6 +84,8 @@ class Settings(BaseSettings):
     channel_max_file_mb: int = 100
     channel_dedup_distance: int = 12
     channel_page_delay: float = 1.5
+    channel_max_text_chars: int = 700
+    channel_skip_words: str = ""
     telegram_web_proxy: str | None = None
     telegram_web_url: str = "https://t.me"
 

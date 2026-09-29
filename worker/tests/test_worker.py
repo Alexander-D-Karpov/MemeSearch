@@ -1,5 +1,9 @@
 import asyncio
 
+import pytest
+
+from memesearch.codex import CodexRuntime, classify
+from memesearch.config import Settings
 from memesearch.rqueue import Message
 from memesearch.worker import Worker
 
@@ -42,3 +46,26 @@ def test_cancelled_job_is_requeued_and_acked():
     assert w.queue.pushed == [("ms:q:high", ({"type": "process", "id": 7, "analyze": True},))]
     assert w.queue.acked == ["1-0"]
     assert w.active == 0
+
+
+def test_codex_session_closes_process_when_startup_fails(monkeypatch):
+    closed = []
+
+    class Broken:
+        async def __aenter__(self):
+            raise BlockingIOError(11, "Resource temporarily unavailable")
+
+        async def close(self):
+            closed.append(True)
+
+    runtime = CodexRuntime(Settings(database_url="postgresql://x", internal_token="x"))
+    monkeypatch.setattr(runtime, "client", lambda sid: Broken())
+
+    async def run():
+        with pytest.raises(BlockingIOError):
+            async with runtime.session(1):
+                pass
+
+    asyncio.run(run())
+    assert closed == [True]
+    assert classify(BlockingIOError(11, "Resource temporarily unavailable")) == "transient"

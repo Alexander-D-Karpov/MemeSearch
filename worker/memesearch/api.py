@@ -207,7 +207,7 @@ async def delete_session(sid: int) -> dict[str, Any]:
         await _close_login(login)
     if state.runtime.has_auth(sid):
         try:
-            async with state.runtime.client(sid) as codex:
+            async with state.runtime.session(sid) as codex:
                 await asyncio.wait_for(codex.logout(), timeout=30)
         except Exception as exc:
             log.warning("logout during delete failed: %s", exc)
@@ -341,7 +341,7 @@ async def logout(sid: int) -> dict[str, Any]:
     await _session(sid)
     if state.runtime.has_auth(sid):
         try:
-            async with state.runtime.client(sid) as codex:
+            async with state.runtime.session(sid) as codex:
                 await asyncio.wait_for(codex.logout(), timeout=30)
         except Exception as exc:
             log.warning("codex logout failed: %s", exc)

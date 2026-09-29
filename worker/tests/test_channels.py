@@ -152,3 +152,14 @@ def test_download_retries_transient_cdn_errors(tmp_path: Path):
     staged = asyncio.run(run())
     assert len(calls) == 3
     assert staged.media.ext == "jpg" and staged.size == len(buf.getvalue())
+
+
+def test_parse_links_and_buttons():
+    html = """<div class="tgme_widget_message" data-post="memes/5">
+      <a class="tgme_widget_message_photo_wrap" style="background-image:url('https://cdn/x.jpg')" href="https://t.me/memes/5"></a>
+      <div class="tgme_widget_message_text">Скидка <a href="https://t.me/+Invite">тут</a></div>
+      <div class="tgme_widget_message_inline_keyboard"><div class="tgme_widget_message_inline_row">
+        <a class="tgme_widget_message_inline_button url_button" href="https://shop.example">Купить</a></div></div>
+    </div>"""
+    post = parse_page(html, "memes").posts[0]
+    assert post.links == ["https://t.me/+Invite"] and post.buttons == 1

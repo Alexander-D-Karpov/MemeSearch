@@ -26,6 +26,7 @@
       {{range $k, $v := .Stats.ByProvider}}<dt>Analyzed by {{$k}}</dt><dd>{{$v}}</dd>{{end}}
     </dl>
     <div class="actions">
+      {{if .TransientFailed}}<button class="btn" type="button" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"transient"}' data-reload>Retry {{.TransientFailed}} temporary failures</button>{{end}}
       <button class="btn" type="button" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"failed"}' data-confirm="Analyze all failed memes again?">Retry failed</button>
       <button class="btn" type="button" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"stuck"}'>Requeue stuck</button>
       <button class="btn" type="button" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"done","mode":"embed"}' data-confirm="Recompute vectors for every analyzed meme? This does not call Codex.">Recompute all vectors</button>

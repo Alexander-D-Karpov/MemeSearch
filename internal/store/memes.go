@@ -46,6 +46,7 @@ type Meme struct {
 	Mood         string     `json:"mood"`
 	NSFW         bool       `json:"nsfw"`
 	Hidden       bool       `json:"hidden"`
+	HiddenReason string     `json:"hidden_reason,omitempty"`
 	Locked       bool       `json:"locked"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
@@ -56,7 +57,7 @@ type Meme struct {
 const memeCols = `id, sha256, kind, mime, ext, file_path, thumb_path, size_bytes, width, height,
 	duration_ms, original_name, source, source_ref, caption, status, error, attempts, provider, model,
 	title, description, ocr_text, transcript, objects, tags, people, template, lang, mood, nsfw, hidden,
-	locked, created_at, updated_at, processed_at`
+	locked, created_at, updated_at, processed_at, hidden_reason`
 
 func scanMeme(row pgx.Row) (*Meme, error) {
 	m := &Meme{}
@@ -64,7 +65,7 @@ func scanMeme(row pgx.Row) (*Meme, error) {
 		&m.Width, &m.Height, &m.DurationMs, &m.OriginalName, &m.Source, &m.SourceRef, &m.Caption, &m.Status,
 		&m.Error, &m.Attempts, &m.Provider, &m.Model, &m.Title, &m.Description, &m.OCRText, &m.Transcript,
 		&m.Objects, &m.Tags, &m.People, &m.Template, &m.Lang, &m.Mood, &m.NSFW, &m.Hidden, &m.Locked,
-		&m.CreatedAt, &m.UpdatedAt, &m.ProcessedAt)
+		&m.CreatedAt, &m.UpdatedAt, &m.ProcessedAt, &m.HiddenReason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -239,6 +240,9 @@ func (s *Store) UpdateMeme(ctx context.Context, id int64, p MemePatch) error {
 	}
 	if p.Hidden != nil {
 		set("hidden", *p.Hidden)
+		if !*p.Hidden {
+			set("hidden_reason", "")
+		}
 	}
 	if p.Locked != nil {
 		set("locked", *p.Locked)
@@ -259,7 +263,7 @@ func (s *Store) UpdateMeme(ctx context.Context, id int64, p MemePatch) error {
 }
 
 func (s *Store) SetHidden(ctx context.Context, ids []int64, hidden bool) error {
-	_, err := s.Pool.Exec(ctx, "UPDATE memes SET hidden=$1, updated_at=now() WHERE id = ANY($2)", hidden, ids)
+	_, err := s.Pool.Exec(ctx, "UPDATE memes SET hidden=$1, hidden_reason='', updated_at=now() WHERE id = ANY($2)", hidden, ids)
 	return err
 }
 
@@ -283,11 +287,21 @@ func (s *Store) MarkPending(ctx context.Context, ids []int64) ([]int64, error) {
 	return pgx.CollectRows(rows, pgx.RowTo[int64])
 }
 
+const TransientErrorPattern = `'(errno 11|resource temporarily unavailable|cannot allocate memory|can''t start new thread|broken pipe|timed out|timeout|connection|network|temporar|overloaded|server error|50[234]|stream disconnected|unexpected eof|reset by peer)'`
+
+func (s *Store) CountTransientFailed(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.Pool.QueryRow(ctx, "SELECT count(*) FROM memes WHERE status='failed' AND error ~* "+TransientErrorPattern).Scan(&n)
+	return n, err
+}
+
 func (s *Store) MarkPendingScope(ctx context.Context, scope string) ([]int64, error) {
 	var where string
 	switch scope {
 	case "failed":
 		where = "status='failed'"
+	case "transient":
+		where = "status='failed' AND error ~* " + TransientErrorPattern
 	case "pending":
 		where = "status='pending'"
 	case "stuck":
