@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     codex_per_session: int = 2
     codex_timeout_seconds: int = 300
     codex_runtime_threads: int = 2
+    codex_max_usage_percent: float = 100
+    codex_usage_refresh_minutes: int = 15
     codex_default_cooldown_minutes: int = 30
     codex_login_timeout_seconds: int = 900
     openai_proxy: str | None = None
