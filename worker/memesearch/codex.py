@@ -248,25 +248,32 @@ class CodexRuntime:
             return info
 
 
-def cooldown_from_usage(usage: dict[str, Any] | None, default_minutes: int) -> datetime:
+def usage_pause_until(usage: dict[str, Any] | None, threshold: float) -> datetime | None:
     now = datetime.now(timezone.utc)
     best: datetime | None = None
     rl = (usage or {}).get("rateLimits") or {}
     for key in ("primary", "secondary"):
         w = rl.get(key) or {}
-        if (w.get("usedPercent") or 0) >= 100 and w.get("resetsAt"):
+        if (w.get("usedPercent") or 0) >= threshold and w.get("resetsAt"):
             at = datetime.fromtimestamp(int(w["resetsAt"]), timezone.utc)
             if at > now and (best is None or at > best):
                 best = at
-    if best is None:
-        for key in ("primary", "secondary"):
-            w = rl.get(key) or {}
-            if w.get("resetsAt") and (w.get("usedPercent") or 0) >= 95:
-                at = datetime.fromtimestamp(int(w["resetsAt"]), timezone.utc)
-                if at > now:
-                    best = at
-                    break
-    return best or now + timedelta(minutes=default_minutes)
+    return best
+
+
+def cooldown_from_usage(usage: dict[str, Any] | None, default_minutes: int, threshold: float = 100) -> datetime:
+    at = usage_pause_until(usage, threshold) or usage_pause_until(usage, min(threshold, 95))
+    return at or datetime.now(timezone.utc) + timedelta(minutes=default_minutes)
+
+
+def pause_reason(usage: dict[str, Any] | None, threshold: float) -> str:
+    rl = (usage or {}).get("rateLimits") or {}
+    for key, name in (("primary", "short-term"), ("secondary", "weekly")):
+        w = rl.get(key) or {}
+        used = w.get("usedPercent") or 0
+        if used >= threshold:
+            return f"paused at {used:.0f}% of the {name} limit (CODEX_MAX_USAGE_PERCENT={threshold:g})"
+    return ""
 
 
 @dataclass
@@ -328,7 +335,7 @@ class CodexPool:
                 tried.add(sid)
                 self.inflight[sid] = self.inflight.get(sid, 0) + 1
                 try:
-                    fields, used_model = await self._run(sid, prompt, images, workdir, model, effort)
+                    fields, used_model, usage = await self._run(sid, prompt, images, workdir, model, effort)
                 except Exception as exc:
                     kind = classify(exc)
                     last_error = f"{sess['name']}: {exc}"[:1000]
@@ -359,11 +366,59 @@ class CodexPool:
                 finally:
                     self.inflight[sid] -= 1
                 await self.pool.execute(
-                    """UPDATE codex_sessions SET status='ok', last_error='', cooldown_until=NULL,
-                    ok_count=ok_count+1, last_used_at=now(), updated_at=now() WHERE id=$1""",
-                    sid,
+                    "UPDATE codex_sessions SET ok_count=ok_count+1, last_used_at=now(), updated_at=now() WHERE id=$1", sid
                 )
+                await self.store_usage(sid, usage)
                 return CodexResult(fields, used_model, sid)
+
+    async def store_usage(self, sid: int, usage: dict[str, Any] | None) -> None:
+        threshold = self.settings.codex_max_usage_percent
+        until = usage_pause_until(usage, threshold)
+        if until is not None:
+            reason = pause_reason(usage, threshold)
+            await self.pool.execute(
+                """UPDATE codex_sessions SET status='limited', cooldown_until=$2, last_error=$3,
+                usage=COALESCE($4::jsonb, usage), last_check_at=now(), updated_at=now() WHERE id=$1""",
+                sid,
+                until,
+                reason,
+                usage,
+            )
+            log.info("codex session %s %s, resumes at %s", sid, reason, until.isoformat())
+            return
+        await self.pool.execute(
+            """UPDATE codex_sessions SET status='ok', last_error='', cooldown_until=NULL,
+            usage=COALESCE($2::jsonb, usage), last_check_at=CASE WHEN $2::jsonb IS NULL THEN last_check_at ELSE now() END,
+            updated_at=now() WHERE id=$1""",
+            sid,
+            usage,
+        )
+
+    async def refresh_idle(self) -> None:
+        rows = await self.pool.fetch(
+            """SELECT id FROM codex_sessions WHERE enabled AND status IN ('new','ok','limited')
+            AND (last_check_at IS NULL OR last_check_at < now() - make_interval(mins => $1))""",
+            self.settings.codex_usage_refresh_minutes,
+        )
+        for r in rows:
+            sid = r["id"]
+            if not self.runtime.has_auth(sid) or self.inflight.get(sid):
+                continue
+            try:
+                async with self.runtime.session(sid) as codex:
+                    usage = await self.runtime.rate_limits(codex)
+            except Exception as exc:
+                log.info("codex session %s usage refresh failed: %s", sid, exc)
+                continue
+            if usage is None:
+                continue
+            cooling = await self.pool.fetchval(
+                "SELECT cooldown_until > now() AND last_error NOT LIKE 'paused at %' FROM codex_sessions WHERE id=$1", sid
+            )
+            if cooling:
+                await self.pool.execute("UPDATE codex_sessions SET usage=$2, last_check_at=now() WHERE id=$1", sid, usage)
+                continue
+            await self.store_usage(sid, usage)
 
     async def _mark_limited(self, sid: int, message: str) -> None:
         usage = None
@@ -372,7 +427,7 @@ class CodexPool:
                 usage = await self.runtime.rate_limits(codex)
         except Exception:
             pass
-        until = cooldown_from_usage(usage, self.settings.codex_default_cooldown_minutes)
+        until = cooldown_from_usage(usage, self.settings.codex_default_cooldown_minutes, self.settings.codex_max_usage_percent)
         await self.pool.execute(
             """UPDATE codex_sessions SET status='limited', cooldown_until=$2, last_error=$3,
             usage=COALESCE($4::jsonb, usage), fail_count=fail_count+1, updated_at=now() WHERE id=$1""",
@@ -385,7 +440,7 @@ class CodexPool:
 
     async def _run(
         self, sid: int, prompt: str, images: list[Path], workdir: Path, model: str, effort: str
-    ) -> tuple[dict[str, Any], str]:
+    ) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
         started = time.monotonic()
         async with self.runtime.session(sid) as codex:
             kwargs: dict[str, Any] = {
@@ -404,6 +459,7 @@ class CodexPool:
                 thread.run(inputs, output_schema=SCHEMA, approval_mode=ApprovalMode.deny_all),
                 timeout=self.settings.codex_timeout_seconds,
             )
-        fields = parse_response(result.final_response)
+            fields = parse_response(result.final_response)
+            usage = await self.runtime.rate_limits(codex)
         log.info("codex session %s analyzed in %.1fs", sid, time.monotonic() - started)
-        return fields, model or "codex-default"
+        return fields, model or "codex-default", usage

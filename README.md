@@ -82,6 +82,10 @@ The worker and ml containers run under `worker/seccomp-userns.json` (Docker defa
 
 Meme pages carry Open Graph and Twitter tags. Images up to 5 MB in jpg/png/gif are used as is; everything else (webp, heic, videos) gets a JPEG preview from `/m/{id}/og.jpg`. Videos also get `og:video`, so Telegram and Discord can play them inline.
 
+## Codex usage
+
+Usage bars refresh after every analysis and every `CODEX_USAGE_REFRESH_MINUTES` for idle sessions. `CODEX_MAX_USAGE_PERCENT` (default 100) pauses a session once its 5-hour or weekly window reaches that percent, e.g. `90` keeps a margin for using Codex yourself; it resumes by itself when that window resets, and memes waiting for it continue.
+
 ## Reprocessing
 
 - Temporary errors (network, timeouts, busy servers, the container running out of processes) do not use up a meme's attempts: it is retried with growing delays. Memes that did end up failed on such errors are retried automatically up to 3 times, and the Failed page has a button to retry them at once.

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from memesearch.codex import classify, cooldown_from_usage
+from memesearch.codex import classify, cooldown_from_usage, pause_reason, usage_pause_until
 from memesearch.prompt import SCHEMA, build_prompt, embedding_text, parse_response
 from memesearch.storage import rel_original, rel_thumb, safe_join, sniff
 
@@ -118,3 +118,13 @@ def test_cooldown_default_without_usage():
     until = cooldown_from_usage(None, 30)
     delta = until - datetime.now(timezone.utc)
     assert timedelta(minutes=29) < delta < timedelta(minutes=31)
+
+
+def test_pause_at_configured_usage_percent():
+    reset = datetime.now(timezone.utc) + timedelta(hours=2)
+    usage = {"rateLimits": {"primary": {"usedPercent": 91, "resetsAt": int(reset.timestamp())}, "secondary": {"usedPercent": 20}}}
+    assert usage_pause_until(usage, 100) is None
+    until = usage_pause_until(usage, 90)
+    assert until is not None and abs((until - reset).total_seconds()) < 2
+    assert pause_reason(usage, 90).startswith("paused at 91% of the short-term limit")
+    assert pause_reason(usage, 100) == ""

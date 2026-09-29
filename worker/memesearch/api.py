@@ -15,7 +15,7 @@ from fastapi.concurrency import run_in_threadpool
 from openai_codex import AsyncCodex
 from pydantic import BaseModel, Field
 
-from .codex import CodexRuntime, cooldown_from_usage
+from .codex import CodexRuntime, cooldown_from_usage, pause_reason, usage_pause_until
 from .config import get_settings
 from .db import connect
 from .embeddings import Embedder
@@ -165,18 +165,18 @@ async def _refresh(sid: int) -> dict[str, Any]:
         )
         return {"status": "logged_out"}
     usage = info["usage"] or {}
-    rl = usage.get("rateLimits") or {}
-    exhausted = any((rl.get(k) or {}).get("usedPercent", 0) >= 100 for k in ("primary", "secondary"))
-    if exhausted:
-        until = cooldown_from_usage(usage, settings.codex_default_cooldown_minutes)
+    threshold = settings.codex_max_usage_percent
+    if usage_pause_until(usage, threshold):
+        until = cooldown_from_usage(usage, settings.codex_default_cooldown_minutes, threshold)
         await state.pool.execute(
             """UPDATE codex_sessions SET status='limited', cooldown_until=$5, email=$2, plan=$3, usage=$4,
-            last_check_at=now(), updated_at=now() WHERE id=$1""",
+            last_error=$6, last_check_at=now(), updated_at=now() WHERE id=$1""",
             sid,
             info["email"],
             str(info["plan"]),
             usage,
             until,
+            pause_reason(usage, threshold),
         )
         status = "limited"
     else:

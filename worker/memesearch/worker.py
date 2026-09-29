@@ -121,6 +121,8 @@ class Worker:
                     await self.backfill_phash()
                 if tick % 120 == 90:
                     await self.auto_retry_failed()
+                if tick % 60 == 45:
+                    await self.pipeline.codex.refresh_idle()
             except Exception as exc:
                 log.warning("maintenance: %s", exc)
             tick += 1
