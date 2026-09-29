@@ -24,18 +24,19 @@ type Channel struct {
 	Duplicates    int        `json:"duplicates"`
 	Skipped       int        `json:"skipped"`
 	Failed        int        `json:"failed"`
+	Filtered      int        `json:"filtered"`
 	CreatedAt     time.Time  `json:"created_at"`
 	LastPolledAt  *time.Time `json:"last_polled_at"`
 	NextPollAt    time.Time  `json:"next_poll_at"`
 }
 
 const channelCols = `id, username, title, enabled, backfill_limit, last_post_id, status, error, added, duplicates,
-	skipped, failed, created_at, last_polled_at, next_poll_at`
+	skipped, failed, created_at, last_polled_at, next_poll_at, filtered`
 
 func scanChannel(row pgx.Row) (*Channel, error) {
 	c := &Channel{}
 	err := row.Scan(&c.ID, &c.Username, &c.Title, &c.Enabled, &c.BackfillLimit, &c.LastPostID, &c.Status, &c.Error,
-		&c.Added, &c.Duplicates, &c.Skipped, &c.Failed, &c.CreatedAt, &c.LastPolledAt, &c.NextPollAt)
+		&c.Added, &c.Duplicates, &c.Skipped, &c.Failed, &c.CreatedAt, &c.LastPolledAt, &c.NextPollAt, &c.Filtered)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

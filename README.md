@@ -74,6 +74,7 @@ The worker and ml containers run under `worker/seccomp-userns.json` (Docker defa
 - First run imports up to **backfill** old posts (0 = whole history), then new posts are fetched every `CHANNEL_POLL_MINUTES`. **Check now** fetches immediately.
 - Each imported meme links to its post, and the post text is passed to the analysis as the caption.
 - Dedup: exact file (sha256) or same picture (256-bit perceptual hash within `CHANNEL_DEDUP_DISTANCE` bits, compared against the whole library) is not added again; the post link is attached to the existing meme instead, so a meme can show several sources.
+- Ads and non-memes are filtered in two steps. Before download, the post text is checked: "#реклама", "erid", INN, promo codes, casino/betting and extra words from `CHANNEL_SKIP_WORDS` skip it right away; invite/bot links, links to other channels, buttons and promo wording add up to a skip; text longer than `CHANNEL_MAX_TEXT_CHARS` counts as an article. After analysis, Codex also flags ads and non-memes, and such channel imports are hidden (not deleted) with the reason shown; find them under Memes → hidden and unhide if wrong. Counts are in the **Filtered** column.
 - Videos longer than `CHANNEL_MAX_VIDEO_SECONDS` and posts Telegram marks as "media too big" are skipped. Files over `CHANNEL_MAX_FILE_MB` too.
 - If t.me is blocked from the server (status `failed`, "cannot reach https://t.me"), set `TELEGRAM_WEB_PROXY`. Without it `TELEGRAM_PROXY`, then `OPENAI_PROXY` is used. http:// and socks5:// both work.
 
@@ -82,6 +83,8 @@ The worker and ml containers run under `worker/seccomp-userns.json` (Docker defa
 Meme pages carry Open Graph and Twitter tags. Images up to 5 MB in jpg/png/gif are used as is; everything else (webp, heic, videos) gets a JPEG preview from `/m/{id}/og.jpg`. Videos also get `og:video`, so Telegram and Discord can play them inline.
 
 ## Reprocessing
+
+- Temporary errors (network, timeouts, busy servers, the container running out of processes) do not use up a meme's attempts: it is retried with growing delays. Memes that did end up failed on such errors are retried automatically up to 3 times, and the Failed page has a button to retry them at once.
 
 - Per meme: **Reprocess** (Codex again) or **Re-embed** (vectors only) on the meme page.
 - Bulk: select in `/admin/memes`, or dashboard buttons (retry failed, requeue stuck, re-embed all, re-analyze everything).

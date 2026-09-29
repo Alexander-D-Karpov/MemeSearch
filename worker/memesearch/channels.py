@@ -18,6 +18,7 @@ from redis.asyncio import Redis
 
 from .config import Settings
 from .media import content_hash, video_duration
+from .postfilter import PostFilter
 from .rqueue import STREAM_LOW
 from .storage import Staged, Storage, TooLarge, Unsupported
 
@@ -60,6 +61,8 @@ class MediaItem:
 class Post:
     id: int
     text: str = ""
+    links: list[str] = field(default_factory=list)
+    buttons: int = 0
     date: datetime | None = None
     media: list[MediaItem] = field(default_factory=list)
 
@@ -120,6 +123,7 @@ def parse_page(html: str, username: str) -> ChannelPage:
         post = Post(int(pid))
         text = msg.select_one(".tgme_widget_message_text")
         if text:
+            post.links = [a["href"] for a in text.select("a[href]")]
             for br in text.find_all("br"):
                 br.replace_with("\n")
             post.text = text.get_text().strip()
@@ -130,6 +134,7 @@ def parse_page(html: str, username: str) -> ChannelPage:
             except ValueError:
                 pass
         post.media = _media(msg, post.id)
+        post.buttons = len(msg.select(".tgme_widget_message_inline_button, .tgme_widget_message_inline_row a"))
         posts.append(post)
     more = soup.select_one("a.tme_messages_more[data-before]")
     before = int(more["data-before"]) if more and str(more["data-before"]).isdigit() else None
@@ -150,6 +155,7 @@ class Counters:
     duplicates: int = 0
     skipped: int = 0
     failed: int = 0
+    filtered: int = 0
 
 
 class ChannelImporter:
@@ -160,6 +166,7 @@ class ChannelImporter:
         self.redis = redis
         self.max_bytes = s.channel_max_file_mb << 20
         self.base = s.telegram_web_url.rstrip("/")
+        self.filter = PostFilter(s.channel_max_text_chars, s.channel_skip_words.split(","))
         self._extend = redis.register_script(_EXTEND)
         self._release = redis.register_script(_RELEASE)
 
@@ -206,7 +213,11 @@ class ChannelImporter:
                 held = False
                 for post in posts:
                     ok = True
-                    for item in post.media:
+                    reason = self.filter.check(post.text, post.links, post.buttons, ch["username"]) if post.media else ""
+                    if reason:
+                        log.info("skip @%s/%s: %s", ch["username"], post.id, reason)
+                        c.filtered += len(post.media)
+                    for item in [] if reason else post.media:
                         ok = await self._item(client, ch, post, item, c) and ok
                     held = held or not ok
                     await self._progress(cid, c, 0 if held else post.id)
@@ -234,15 +245,16 @@ class ChannelImporter:
     async def _progress(self, cid: int, c: Counters, last_post: int) -> None:
         await self.pool.execute(
             """UPDATE channels SET added=added+$2, duplicates=duplicates+$3, skipped=skipped+$4, failed=failed+$5,
-            last_post_id=GREATEST(last_post_id, $6) WHERE id=$1""",
+            filtered=filtered+$7, last_post_id=GREATEST(last_post_id, $6) WHERE id=$1""",
             cid,
             c.added,
             c.duplicates,
             c.skipped,
             c.failed,
             last_post,
+            c.filtered,
         )
-        c.added = c.duplicates = c.skipped = c.failed = 0
+        c.added = c.duplicates = c.skipped = c.failed = c.filtered = 0
 
     async def _fetch(self, client: httpx.AsyncClient, url: str, params: dict | None = None) -> str:
         for attempt in range(4):

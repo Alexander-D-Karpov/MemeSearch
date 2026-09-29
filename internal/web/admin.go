@@ -43,12 +43,13 @@ func (s *Server) loadSettings(ctx context.Context) (AnalysisSettings, error) {
 }
 
 type Dashboard struct {
-	Stats    *store.Stats
-	Queue    queue.Lengths
-	Failures []*store.Meme
-	Imports  []*store.ImportJob
-	Codex    []*store.CodexSession
-	ML       string
+	Stats           *store.Stats
+	TransientFailed int64
+	Queue           queue.Lengths
+	Failures        []*store.Meme
+	Imports         []*store.ImportJob
+	Codex           []*store.CodexSession
+	ML              string
 }
 
 func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +57,10 @@ func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
 	d := Dashboard{Queue: s.queue.Lengths(ctx)}
 	var err error
 	if d.Stats, err = s.store.Stats(ctx); err != nil {
+		storeErr(w, err)
+		return
+	}
+	if d.TransientFailed, err = s.store.CountTransientFailed(ctx); err != nil {
 		storeErr(w, err)
 		return
 	}
@@ -93,10 +98,11 @@ func inboxRoot(uploadDir string) string {
 }
 
 type AdminMemes struct {
-	Memes      []*store.Meme
-	Status     string
-	Kind       string
-	NextBefore int64
+	TransientFailed int64
+	Memes           []*store.Meme
+	Status          string
+	Kind            string
+	NextBefore      int64
 }
 
 func (s *Server) pageAdminMemes(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +122,12 @@ func (s *Server) pageAdminMemes(w http.ResponseWriter, r *http.Request) {
 	}
 	s.decorate(memes...)
 	d := AdminMemes{Memes: memes, Status: status, Kind: validKind(r.URL.Query().Get("kind"))}
+	if status == "failed" {
+		if d.TransientFailed, err = s.store.CountTransientFailed(r.Context()); err != nil {
+			storeErr(w, err)
+			return
+		}
+	}
 	if len(memes) == limit {
 		d.NextBefore = memes[len(memes)-1].ID
 	}

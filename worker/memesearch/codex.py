@@ -6,6 +6,8 @@ import logging
 import os
 import shutil
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -48,6 +50,10 @@ AUTH_MARKERS = (
 )
 
 
+class CodexTransient(Exception):
+    pass
+
+
 class CodexUnavailable(Exception):
     def __init__(self, message: str, retry_at: datetime | None = None) -> None:
         super().__init__(message)
@@ -58,12 +64,47 @@ class CodexFailed(Exception):
     pass
 
 
+TRANSIENT_MARKERS = (
+    "resource temporarily unavailable",
+    "errno 11",
+    "cannot allocate memory",
+    "can't start new thread",
+    "broken pipe",
+    "timed out",
+    "timeout",
+    "connection",
+    "network",
+    "temporarily",
+    "overloaded",
+    "server error",
+    "502",
+    "503",
+    "504",
+    "stream disconnected",
+    "unexpected eof",
+    "reset by peer",
+)
+
+
+TRANSIENT_SQL = (
+    "errno 11|resource temporarily unavailable|cannot allocate memory|can't start new thread|broken pipe|timed out|"
+    "timeout|connection|network|temporar|overloaded|server error|50[234]|stream disconnected|unexpected eof|reset by peer"
+)
+
+
+def is_transient(exc: BaseException | str) -> bool:
+    text = exc.lower() if isinstance(exc, str) else f"{type(exc).__name__}: {exc}".lower()
+    return isinstance(exc, (TimeoutError, ConnectionError, BlockingIOError)) or any(m in text for m in TRANSIENT_MARKERS)
+
+
 def classify(exc: BaseException) -> str:
     text = f"{type(exc).__name__}: {exc} {getattr(exc, 'data', '')}".lower()
     if any(m in text for m in LIMIT_MARKERS):
         return "limit"
     if any(m in text for m in AUTH_MARKERS):
         return "auth"
+    if is_transient(exc):
+        return "transient"
     return "other"
 
 
@@ -107,6 +148,8 @@ class CodexRuntime:
         env["HOME"] = str(home)
         env["CODEX_HOME"] = str(home)
         env["NO_PROXY"] = env["no_proxy"] = self.settings.no_proxy
+        env["TOKIO_WORKER_THREADS"] = str(self.settings.codex_runtime_threads)
+        env["RAYON_NUM_THREADS"] = str(self.settings.codex_runtime_threads)
         shared = self.settings.openai_proxy
         for key, value in (
             ("HTTP_PROXY", self.settings.codex_http_proxy or shared),
@@ -155,6 +198,18 @@ class CodexRuntime:
     def client(self, session_id: int) -> AsyncCodex:
         self.write_config(session_id)
         return AsyncCodex(CodexConfig(env=self.env(session_id)))
+
+    @asynccontextmanager
+    async def session(self, session_id: int) -> AsyncIterator[AsyncCodex]:
+        codex = self.client(session_id)
+        try:
+            await codex.__aenter__()
+            yield codex
+        finally:
+            try:
+                await asyncio.shield(codex.close())
+            except Exception as exc:
+                log.debug("codex close: %s", exc)
 
     def import_auth(self, session_id: int, data: bytes) -> None:
         if len(data) > 2 * 1024 * 1024:
@@ -281,6 +336,13 @@ class CodexPool:
                     if kind == "limit":
                         await self._mark_limited(sid, str(exc))
                         continue
+                    if kind == "transient":
+                        await self.pool.execute(
+                            "UPDATE codex_sessions SET last_error=$2, fail_count=fail_count+1, updated_at=now() WHERE id=$1",
+                            sid,
+                            last_error,
+                        )
+                        raise CodexTransient(last_error) from exc
                     if kind == "auth":
                         await self.pool.execute(
                             "UPDATE codex_sessions SET status='error', last_error=$2, fail_count=fail_count+1, updated_at=now() WHERE id=$1",
@@ -306,7 +368,7 @@ class CodexPool:
     async def _mark_limited(self, sid: int, message: str) -> None:
         usage = None
         try:
-            async with self.runtime.client(sid) as codex:
+            async with self.runtime.session(sid) as codex:
                 usage = await self.runtime.rate_limits(codex)
         except Exception:
             pass
@@ -325,7 +387,7 @@ class CodexPool:
         self, sid: int, prompt: str, images: list[Path], workdir: Path, model: str, effort: str
     ) -> tuple[dict[str, Any], str]:
         started = time.monotonic()
-        async with self.runtime.client(sid) as codex:
+        async with self.runtime.session(sid) as codex:
             kwargs: dict[str, Any] = {
                 "approval_mode": ApprovalMode.deny_all,
                 "developer_instructions": SYSTEM,

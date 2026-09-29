@@ -76,7 +76,7 @@
     <div class="admin-box">
       <span class="label">Admin</span>
       <dl class="facts">
-        <dt>Status</dt><dd><span class="status-{{$m.Status}}">{{$m.Status}}</span>{{if $m.Locked}} · locked{{end}}{{if $m.Hidden}} · hidden{{end}}</dd>
+        <dt>Status</dt><dd><span class="status-{{$m.Status}}">{{$m.Status}}</span>{{if $m.Locked}} · locked{{end}}{{if $m.Hidden}} · hidden{{with $m.HiddenReason}} ({{.}}){{end}}{{end}}</dd>
         {{if $m.Provider}}<dt>Analyzed by</dt><dd>{{$m.Provider}}{{if $m.Model}} ({{$m.Model}}){{end}}</dd>{{end}}
         <dt>Attempts</dt><dd>{{$m.Attempts}}</dd>
         {{if $m.Error}}<dt>Error</dt><dd class="error">{{$m.Error}}</dd>{{end}}

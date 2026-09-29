@@ -9,6 +9,12 @@
   <a class="chip{{if eq .Status "failed"}} active{{end}}" href="/admin/memes?status=failed">failed</a>
   <a class="chip{{if eq .Status "hidden"}} active{{end}}" href="/admin/memes?status=hidden">hidden</a>
 </div>
+{{if .TransientFailed}}
+<div class="notice row">
+  <span>{{.TransientFailed}} of these failed on a temporary error (network, timeout, server busy). They are retried automatically up to 3 times; you can also retry them now.</span>
+  <button class="btn btn-primary" type="button" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"transient"}' data-reload>Retry {{.TransientFailed}} now</button>
+</div>
+{{end}}
 <div class="bulkbar" id="bulkbar">
   <label class="check"><input type="checkbox" id="select-all"> Select all</label>
   <span id="selected-count">0 selected</span>

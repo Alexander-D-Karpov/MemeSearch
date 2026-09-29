@@ -17,8 +17,23 @@ SCHEMA: dict[str, Any] = {
         "mood": {"type": "string"},
         "language": {"type": "string"},
         "nsfw": {"type": "boolean"},
+        "is_meme": {"type": "boolean"},
+        "is_ad": {"type": "boolean"},
     },
-    "required": ["title", "text", "description", "objects", "people", "template", "tags", "mood", "language", "nsfw"],
+    "required": [
+        "title",
+        "text",
+        "description",
+        "objects",
+        "people",
+        "template",
+        "tags",
+        "mood",
+        "language",
+        "nsfw",
+        "is_meme",
+        "is_ad",
+    ],
     "additionalProperties": False,
 }
 
@@ -46,7 +61,11 @@ mood — one or two words for the tone, e.g. "sarcastic", "wholesome", "absurd",
 
 language — ISO 639-1 code of the main text language, or "none" if there is no text.
 
-nsfw — true only for nudity, explicit sexual content or graphic gore."""
+nsfw — true only for nudity, explicit sexual content or graphic gore.
+
+is_meme — true for anything made or shared to be funny or ironic: memes, reaction images, jokes, funny screenshots and videos. False for plain news photos, article or document screenshots, announcements, schedules, polls, product photos and other non-humorous posts.
+
+is_ad — true if the image or the caption advertises something: a product, service, shop, course, app, casino or betting, crypto, giveaway, another channel, or contains a promo code, referral link or "реклама"/"erid" label. A meme that merely mentions a brand as part of the joke is not an ad."""
 
 
 def build_prompt(
@@ -131,6 +150,8 @@ def parse_response(raw: str | None) -> dict[str, Any]:
         "mood": str(data.get("mood") or "").strip()[:60],
         "lang": "" if lang == "none" else lang,
         "nsfw": bool(data.get("nsfw", False)),
+        "is_meme": bool(data.get("is_meme", True)),
+        "is_ad": bool(data.get("is_ad", False)),
     }
 
 

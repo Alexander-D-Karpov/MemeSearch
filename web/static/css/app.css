@@ -397,6 +397,7 @@ tr:last-child td { border-bottom: 0; }
 
 /* admin memes */
 .filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.notice { align-items: center; justify-content: space-between; padding: 12px 14px; margin-bottom: 12px; border: 1px solid var(--warn, var(--border)); border-radius: var(--radius); }
 .bulkbar {
   position: sticky;
   top: 112px;

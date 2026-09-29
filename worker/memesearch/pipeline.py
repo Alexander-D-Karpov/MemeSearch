@@ -13,11 +13,12 @@ import httpx
 import numpy as np
 from redis.asyncio import Redis
 
-from .codex import CodexFailed, CodexPool, CodexUnavailable
+from .codex import CodexFailed, CodexPool, CodexTransient, CodexUnavailable, is_transient
 from .config import Settings
 from .db import SettingsCache, fetch_meme
 from .fallback import FallbackAnalyzer
 from .media import Prepared, extract_audio, prepare
+from .postfilter import analysis_verdict
 from .prompt import build_prompt, embedding_text
 from .rqueue import JobQueue
 from .storage import rel_thumb, safe_join
@@ -27,11 +28,14 @@ log = logging.getLogger(__name__)
 
 
 class RetryLater(Exception):
-    def __init__(self, message: str, delay: float, count_attempt: bool, wait_codex: bool = False) -> None:
+    def __init__(
+        self, message: str, delay: float, count_attempt: bool, wait_codex: bool = False, transient: bool = False
+    ) -> None:
         super().__init__(message)
         self.delay = delay
         self.count_attempt = count_attempt
         self.wait_codex = wait_codex
+        self.transient = transient
 
 
 class EmbedPending(Exception):
@@ -142,8 +146,14 @@ class Pipeline:
         except TimeoutError:
             await self._fail_or_retry(meme_id, job, "processing timed out", 120, full, full)
         except RetryLater as exc:
-            await self._fail_or_retry(meme_id, job, str(exc), exc.delay, exc.count_attempt and full, full, exc.wait_codex)
+            if exc.transient:
+                await self._transient(meme_id, job, str(exc), full)
+            else:
+                await self._fail_or_retry(meme_id, job, str(exc), exc.delay, exc.count_attempt and full, full, exc.wait_codex)
         except (CodexFailed, httpx.HTTPError, OSError, ValueError, RuntimeError) as exc:
+            if is_transient(exc):
+                await self._transient(meme_id, job, str(exc), full)
+                return
             log.warning("meme %s failed: %s", meme_id, exc)
             await self._fail_or_retry(meme_id, job, str(exc), None, full, full)
         finally:
@@ -199,6 +209,8 @@ class Pipeline:
                 raise EmbedPending(f"analysis saved, embedding failed: {exc}") from exc
             raise
         await self._save(meme_id, prep, thumb_rel, fields, provider, model, clip, text_vec)
+        if verdict := analysis_verdict(fields):
+            await self._hide_channel_meme(meme_id, verdict)
         await self.queue.bump()
         await self.queue.event({"type": "meme", "id": meme_id, "status": "done", "title": merged.get("title", "")})
         log.info("meme %s done via %s", meme_id, provider if full else "embed-only")
@@ -218,6 +230,7 @@ class Pipeline:
     async def _analyze(self, prompt: str, frames: list[Path], workdir: Path, app) -> tuple[dict[str, Any], str, str]:
         reasons: list[str] = []
         retry_at: datetime | None = None
+        transient = False
         if app.codex_enabled:
             try:
                 res = await self.codex.analyze(
@@ -227,6 +240,9 @@ class Pipeline:
             except CodexUnavailable as exc:
                 reasons.append(f"codex unavailable: {exc}")
                 retry_at = exc.retry_at
+            except CodexTransient as exc:
+                reasons.append(f"codex temporary error: {exc}")
+                transient = True
             except CodexFailed as exc:
                 reasons.append(f"codex failed: {exc}")
         if app.fallback_enabled and self.fallback.configured:
@@ -235,7 +251,11 @@ class Pipeline:
                 return fields, "fallback", model
             except Exception as exc:
                 reasons.append(f"fallback failed: {exc}")
+                if transient or is_transient(exc):
+                    raise RetryLater("; ".join(reasons)[:2000], 120, False, transient=True) from exc
                 raise RetryLater("; ".join(reasons)[:2000], 300, True) from exc
+        if transient:
+            raise RetryLater("; ".join(reasons)[:2000], 120, False, transient=True)
         if not app.codex_enabled and not (app.fallback_enabled and self.fallback.configured):
             raise RetryLater("no analysis provider enabled", 1800, False)
         if retry_at is not None:
@@ -311,6 +331,32 @@ class Pipeline:
             error[:2000],
         )
         await self.queue.event({"type": "meme", "id": meme_id, "status": "failed", "error": error[:300]})
+
+    async def _hide_channel_meme(self, meme_id: int, reason: str) -> None:
+        channel_id = await self.pool.fetchval(
+            """WITH src AS (
+                SELECT ms.channel_id FROM memes m JOIN meme_sources ms ON ms.meme_id = m.id AND ms.url = m.source_ref
+                WHERE m.id = $1 AND ms.channel_id IS NOT NULL AND NOT m.locked AND NOT m.hidden LIMIT 1
+            ), hid AS (
+                UPDATE memes SET hidden = true, hidden_reason = $2 WHERE id = $1 AND EXISTS (SELECT 1 FROM src) RETURNING id
+            )
+            SELECT channel_id FROM src WHERE EXISTS (SELECT 1 FROM hid)""",
+            meme_id,
+            reason,
+        )
+        if channel_id:
+            await self.pool.execute("UPDATE channels SET filtered = filtered + 1 WHERE id = $1", channel_id)
+            log.info("meme %s hidden: %s", meme_id, reason)
+
+    async def _transient(self, meme_id: int, job: dict[str, Any], error: str, incremented: bool) -> None:
+        n = int(job.get("transient", 0)) + 1
+        if n > self.s.max_transient_retries:
+            await self._fail_or_retry(meme_id, job, f"gave up after {n - 1} temporary errors: {error}", None, True, incremented)
+            return
+        delay = min(3600, 60 * 2 ** min(n - 1, 6))
+        await self._fail_or_retry(
+            meme_id, {**job, "transient": n}, f"temporary error, retry {n}: {error}", delay, False, incremented
+        )
 
     async def _fail_or_retry(
         self,

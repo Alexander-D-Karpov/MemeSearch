@@ -9,7 +9,7 @@ import socket
 from redis.asyncio import Redis
 
 from .channels import ChannelImporter, claim_due
-from .codex import CodexPool, CodexRuntime
+from .codex import TRANSIENT_SQL, CodexPool, CodexRuntime
 from .config import get_settings
 from .db import connect
 from .fallback import FallbackAnalyzer
@@ -119,6 +119,8 @@ class Worker:
                     await self.wake_codex_waiters()
                 if tick % 60 == 30:
                     await self.backfill_phash()
+                if tick % 120 == 90:
+                    await self.auto_retry_failed()
             except Exception as exc:
                 log.warning("maintenance: %s", exc)
             tick += 1
@@ -153,6 +155,21 @@ class Worker:
         for job_id in await self._unlocked([j["id"] for j in jobs], "ms:lock:import:"):
             log.info("resuming orphaned import %s", job_id)
             await self.queue.push(STREAM_HIGH, {"type": "import", "job_id": job_id})
+
+    async def auto_retry_failed(self) -> None:
+        rows = await self.pool.fetch(
+            """UPDATE memes SET status='pending', attempts=0, auto_retries=auto_retries+1, updated_at=now()
+            WHERE id IN (
+                SELECT id FROM memes WHERE status='failed' AND auto_retries < $1 AND error ~* $2
+                AND updated_at < now() - make_interval(mins => 15 * (auto_retries + 1))
+                ORDER BY id LIMIT 500
+            ) RETURNING id""",
+            self.s.auto_retry_failed,
+            TRANSIENT_SQL,
+        )
+        if rows:
+            log.info("retrying %d memes that failed on temporary errors", len(rows))
+            await self.queue.push(STREAM_LOW, *({"type": "process", "id": r["id"], "analyze": True} for r in rows))
 
     async def wake_codex_waiters(self) -> None:
         if not await self.queue.codex_waiting():
