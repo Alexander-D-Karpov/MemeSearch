@@ -24,8 +24,10 @@
       <dt>Scheduled retries</dt><dd>{{.Queue.Delayed}}</dd>
       <dt>Waiting for Codex</dt><dd>{{.Queue.WaitCodex}}{{if .Queue.WaitCodex}} <span class="muted small">resume when a session is free</span>{{end}}</dd>
       {{range $k, $v := .Stats.ByProvider}}<dt>Analyzed by {{$k}}</dt><dd>{{$v}}</dd>{{end}}
+      <dt>Uploaded to Telegram</dt><dd>{{.TgCache.Uploaded}} <span class="muted small">for inline search · {{.TgCache.Waiting}} waiting{{if .TgCache.Failed}} · <span class="error">{{.TgCache.Failed}} failed</span>{{end}}</span></dd>
     </dl>
     <div class="actions">
+      {{if .TgCache.Failed}}<button class="btn" type="button" data-api="POST /api/v1/admin/tgcache/retry" data-reload>Retry {{.TgCache.Failed}} Telegram uploads</button>{{end}}
       {{if .TransientFailed}}<button class="btn" type="button" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"transient"}' data-reload>Retry {{.TransientFailed}} temporary failures</button>{{end}}
       <button class="btn" type="button" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"failed"}' data-confirm="Analyze all failed memes again?">Retry failed</button>
       <button class="btn" type="button" data-api="POST /api/v1/admin/reprocess" data-body='{"scope":"stuck"}'>Requeue stuck</button>

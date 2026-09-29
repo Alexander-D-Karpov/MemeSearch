@@ -5,6 +5,7 @@ import html
 import json
 import logging
 import tempfile
+import time
 from pathlib import Path
 
 import httpx
@@ -45,12 +46,15 @@ router = Router()
 
 NOTIFY_TTL = 6 * 3600
 INLINE_PAGE = 30
+INLINE_SCAN = 50
+INLINE_SCAN_PAGES = 4
 PHOTO_URL_MAX = 5 << 20
 FILE_URL_MAX = 20 << 20
 PHOTO_UPLOAD_MAX = 10 << 20
 UPLOAD_MAX = 50 << 20
 PHOTO_EXTS = {"jpg", "jpeg", "png", "webp"}
 CACHE_PRIO = "ms:tg:cache:prio"
+CACHE_ATTEMPTS = 3
 
 
 class Ctx:
@@ -301,7 +305,12 @@ async def cache_one(bot: Bot, chat_id: int, m: dict) -> None:
             if "chat not found" in str(exc).lower():
                 raise CacheChatUnavailable(str(exc)) from exc
             log.info("cannot cache meme %s in telegram: %s", m["id"], exc)
-            await ctx.pool.execute("UPDATE memes SET tg_cache_error=$2 WHERE id=$1", m["id"], str(exc)[:500] or "error")
+            await ctx.pool.execute(
+                """UPDATE memes SET tg_cache_error=$2, tg_cache_attempts=tg_cache_attempts+1, tg_cache_failed_at=now()
+                WHERE id=$1""",
+                m["id"],
+                str(exc)[:500] or "error",
+            )
             return
         await ctx.pool.execute(
             "UPDATE memes SET tg_file_id=$2, tg_file_type=$3, tg_cache_error='' WHERE id=$1", m["id"], file_id, file_type
@@ -322,8 +331,19 @@ async def cacher(bot: Bot) -> None:
     if not chat_id:
         log.warning("no TELEGRAM_CACHE_CHAT_ID or admin id: inline results use media links only")
         return
+    last_retry = 0.0
     while True:
         try:
+            if time.monotonic() - last_retry > 600:
+                last_retry = time.monotonic()
+                n = await ctx.pool.fetchval(
+                    """WITH r AS (UPDATE memes SET tg_cache_error='' WHERE tg_cache_error <> '' AND tg_cache_attempts < $1
+                    AND tg_cache_failed_at < now() - make_interval(hours => tg_cache_attempts) RETURNING 1)
+                    SELECT count(*) FROM r""",
+                    CACHE_ATTEMPTS,
+                )
+                if n:
+                    log.info("retrying %d failed telegram uploads", n)
             prio = [int(i) for i in await ctx.redis.spop(CACHE_PRIO, 30) or []]
             rows = []
             if prio:
@@ -353,27 +373,40 @@ async def inline_search(query: InlineQuery) -> None:
         return
     offset = int(query.offset) if query.offset.isdigit() else 0
     q = query.query.strip()
-    params: dict = {"limit": INLINE_PAGE, "offset": offset}
-    if q:
-        params["q"] = q
-    try:
-        resp = await ctx.http.get("/api/v1/search", params=params)
-        resp.raise_for_status()
-        memes = resp.json().get("memes") or []
-    except httpx.HTTPError as exc:
-        log.warning("inline search %r failed: %s", q, exc)
-        await query.answer([], cache_time=5, is_personal=True)
-        return
-    cache = await file_cache([m["id"] for m in memes])
-    missing = [m["id"] for m in memes if m["id"] not in cache]
-    if missing:
-        await ctx.redis.sadd(CACHE_PRIO, *missing)
-    results = [r for m in memes if (r := inline_result(m, *cache.get(m["id"], ("", "")))) is not None]
+    results: list = []
+    more = True
+    for _ in range(INLINE_SCAN_PAGES):
+        params: dict = {"limit": INLINE_SCAN, "offset": offset}
+        if q:
+            params["q"] = q
+        try:
+            resp = await ctx.http.get("/api/v1/search", params=params)
+            resp.raise_for_status()
+            memes = resp.json().get("memes") or []
+        except httpx.HTTPError as exc:
+            log.warning("inline search %r failed: %s", q, exc)
+            await query.answer([], cache_time=5, is_personal=True)
+            return
+        cache = await file_cache([m["id"] for m in memes])
+        missing = [m["id"] for m in memes if m["id"] not in cache]
+        if missing:
+            await ctx.redis.sadd(CACHE_PRIO, *missing)
+        for m in memes:
+            if len(results) >= INLINE_PAGE:
+                break
+            offset += 1
+            if m["id"] not in cache and not settings.telegram_inline_url_fallback:
+                continue
+            if (r := inline_result(m, *cache.get(m["id"], ("", "")))) is not None:
+                results.append(r)
+        more = len(memes) == INLINE_SCAN
+        if len(results) >= INLINE_PAGE or not more:
+            break
     await query.answer(
         results,
         cache_time=30 if q else 60,
         is_personal=False,
-        next_offset=str(offset + INLINE_PAGE) if len(memes) == INLINE_PAGE else "",
+        next_offset=str(offset) if more else "",
     )
 
 

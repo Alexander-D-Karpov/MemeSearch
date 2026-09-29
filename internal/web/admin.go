@@ -45,6 +45,7 @@ func (s *Server) loadSettings(ctx context.Context) (AnalysisSettings, error) {
 type Dashboard struct {
 	Stats           *store.Stats
 	TransientFailed int64
+	TgCache         store.TgCache
 	Queue           queue.Lengths
 	Failures        []*store.Meme
 	Imports         []*store.ImportJob
@@ -61,6 +62,10 @@ func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if d.TransientFailed, err = s.store.CountTransientFailed(ctx); err != nil {
+		storeErr(w, err)
+		return
+	}
+	if d.TgCache, err = s.store.TgCacheStats(ctx); err != nil {
 		storeErr(w, err)
 		return
 	}
@@ -645,4 +650,13 @@ func (s *Server) writeML(w http.ResponseWriter, out json.RawMessage, err error) 
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(out)
+}
+
+func (s *Server) apiRetryTgCache(w http.ResponseWriter, r *http.Request) {
+	n, err := s.store.RetryTgCache(r.Context())
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"queued": n})
 }

@@ -1,0 +1,2 @@
+ALTER TABLE memes ADD COLUMN tg_cache_attempts INT NOT NULL DEFAULT 0;
+ALTER TABLE memes ADD COLUMN tg_cache_failed_at TIMESTAMPTZ;

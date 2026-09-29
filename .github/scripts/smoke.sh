@@ -69,4 +69,8 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" -H 'Content-Type: appli
 psql "$DATABASE_URL" -qc "INSERT INTO meme_sources (meme_id, url, source, post_id) VALUES ($ID, 'https://t.me/some_memes/5', 'telegram', 5)"
 curl -fsS "$BASE/m/$ID" | grep -q 'https://t.me/some_memes/5' || fail "source link missing on meme page"
 
+psql "$DATABASE_URL" -qc "UPDATE memes SET tg_cache_error='boom', tg_cache_attempts=3 WHERE id=$ID"
+[ "$(curl -fsS -H "$AUTH" -X POST "$BASE/api/v1/admin/tgcache/retry" | json 'd["queued"]')" = "1" ] || fail "telegram upload retry"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$BASE/admin")" = "200" ] || fail "dashboard"
+
 echo "smoke test passed"

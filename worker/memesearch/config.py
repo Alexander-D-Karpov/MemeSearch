@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     telegram_proxy: str | None = None
     bot_max_file_mb: int = 20
     telegram_inline_public: bool = True
+    telegram_inline_url_fallback: bool = False
     telegram_cache_chat_id: int | None = None
     telegram_cache_interval: float = 1.2
 
