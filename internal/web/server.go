@@ -99,6 +99,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/admin/settings", admin(http.HandlerFunc(s.apiGetSettings)))
 	mux.Handle("PUT /api/v1/admin/settings", admin(http.HandlerFunc(s.apiPutSettings)))
 
+	mux.Handle("POST /api/v1/admin/tgcache/retry", admin(http.HandlerFunc(s.apiRetryTgCache)))
 	mux.Handle("GET /api/v1/admin/channels", admin(http.HandlerFunc(s.apiChannels)))
 	mux.Handle("POST /api/v1/admin/channels", admin(http.HandlerFunc(s.apiChannelCreate)))
 	mux.Handle("PATCH /api/v1/admin/channels/{id}", admin(http.HandlerFunc(s.apiChannelPatch)))

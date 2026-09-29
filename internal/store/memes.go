@@ -386,3 +386,25 @@ func (s *Store) RecentFailures(ctx context.Context, limit int) ([]*Meme, error) 
 	}
 	return collectMemes(rows)
 }
+
+type TgCache struct {
+	Uploaded int64
+	Waiting  int64
+	Failed   int64
+}
+
+func (s *Store) TgCacheStats(ctx context.Context) (TgCache, error) {
+	var c TgCache
+	err := s.Pool.QueryRow(ctx, `SELECT
+		count(*) FILTER (WHERE tg_file_id <> ''),
+		count(*) FILTER (WHERE tg_file_id = '' AND tg_cache_error = ''),
+		count(*) FILTER (WHERE tg_file_id = '' AND tg_cache_error <> '')
+		FROM memes WHERE status = 'done' AND NOT hidden`).Scan(&c.Uploaded, &c.Waiting, &c.Failed)
+	return c, err
+}
+
+func (s *Store) RetryTgCache(ctx context.Context) (int64, error) {
+	tag, err := s.Pool.Exec(ctx, `UPDATE memes SET tg_cache_error = '', tg_cache_attempts = 0
+		WHERE tg_file_id = '' AND tg_cache_error <> ''`)
+	return tag.RowsAffected(), err
+}
