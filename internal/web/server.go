@@ -68,7 +68,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /partials/results", s.partialResults)
 	mux.HandleFunc("GET /m/{id}", s.pageMeme)
 	mux.HandleFunc("GET /m/{id}/og.jpg", s.memeOGImage)
-	mux.HandleFunc("GET /m/{id}/looks", s.pageLookAlike)
 	mux.HandleFunc("GET /m/{id}/photo.jpg", s.memePhoto)
 	mux.HandleFunc("GET /login", s.pageLogin)
 	mux.HandleFunc("POST /login", s.doLogin)
