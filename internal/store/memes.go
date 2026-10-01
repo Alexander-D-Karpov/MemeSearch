@@ -408,3 +408,9 @@ func (s *Store) RetryTgCache(ctx context.Context) (int64, error) {
 		WHERE tg_file_id = '' AND tg_cache_error <> ''`)
 	return tag.RowsAffected(), err
 }
+
+func (s *Store) AnalyzedSince(ctx context.Context, d time.Duration) (int64, error) {
+	var n int64
+	err := s.Pool.QueryRow(ctx, "SELECT count(*) FROM memes WHERE analyzed_at > now() - make_interval(secs => $1)", d.Seconds()).Scan(&n)
+	return n, err
+}

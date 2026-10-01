@@ -1,18 +1,21 @@
 {{define "content"}}
 {{with .Data}}
 <div class="page-head">
-  <h1>Dashboard</h1>
+  <h1>Dashboard <span class="live-status small muted" id="live-status"></span></h1>
   <a class="btn btn-primary" href="/admin/upload">Upload memes</a>
 </div>
 
+<div id="live" data-live="5000">
 <div class="stats">
   <div class="stat"><b>{{.Stats.Total}}</b><span>memes total</span></div>
   <div class="stat"><b class="status-done">{{index .Stats.ByStatus "done"}}</b><span>searchable</span></div>
   <div class="stat"><b class="status-pending">{{index .Stats.ByStatus "pending"}}</b><span>waiting</span></div>
   <div class="stat"><b class="status-processing">{{index .Stats.ByStatus "processing"}}</b><span>analyzing now</span></div>
   <a class="stat" href="/admin/memes?status=failed"><b class="status-failed">{{index .Stats.ByStatus "failed"}}</b><span>failed</span></a>
+  <div class="stat"><b>{{.LastHour}}</b><span>analyzed last hour</span></div>
   <div class="stat"><b>{{bytes .Stats.Bytes}}</b><span>on disk</span></div>
 </div>
+<p class="small muted eta">{{.ETA}}</p>
 
 <div class="two-col">
   <section class="panel">
@@ -86,5 +89,6 @@
   </div>
 </section>
 {{end}}
+</div>
 {{end}}
 {{end}}

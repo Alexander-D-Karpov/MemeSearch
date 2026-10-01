@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Alexander-D-Karpov/MemeSearch/internal/ingest"
 	"github.com/Alexander-D-Karpov/MemeSearch/internal/mlclient"
@@ -44,6 +45,8 @@ func (s *Server) loadSettings(ctx context.Context) (AnalysisSettings, error) {
 
 type Dashboard struct {
 	Stats           *store.Stats
+	LastHour        int64
+	ETA             string
 	TransientFailed int64
 	TgCache         store.TgCache
 	Queue           queue.Lengths
@@ -69,6 +72,11 @@ func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
 		storeErr(w, err)
 		return
 	}
+	if d.LastHour, err = s.store.AnalyzedSince(ctx, time.Hour); err != nil {
+		storeErr(w, err)
+		return
+	}
+	d.ETA = eta(d.Stats.ByStatus["pending"]+d.Stats.ByStatus["processing"], d.LastHour)
 	d.Failures, _ = s.store.RecentFailures(ctx, 10)
 	s.decorate(d.Failures...)
 	d.Imports, _ = s.store.Imports(ctx, 5)
@@ -78,6 +86,7 @@ func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
 	} else {
 		d.ML = string(raw)
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	s.render(w, r, http.StatusOK, "admin/dashboard", Page{Title: "Admin", Data: d})
 }
 
@@ -659,4 +668,22 @@ func (s *Server) apiRetryTgCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"queued": n})
+}
+
+func eta(left, perHour int64) string {
+	switch {
+	case left == 0:
+		return "queue is empty"
+	case perHour == 0:
+		return "no analyses in the last hour"
+	}
+	h := float64(left) / float64(perHour)
+	switch {
+	case h < 1:
+		return fmt.Sprintf("about %d min at this pace", max(1, int(h*60)))
+	case h < 48:
+		return fmt.Sprintf("about %.0f h at this pace", h)
+	default:
+		return fmt.Sprintf("about %.0f days at this pace", h/24)
+	}
 }
