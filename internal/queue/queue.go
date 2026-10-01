@@ -94,21 +94,25 @@ type Lengths struct {
 func (q *Queue) Lengths(ctx context.Context) Lengths {
 	var l Lengths
 	for _, s := range []string{StreamHigh, StreamLow} {
-		groups, err := q.R.XInfoGroups(ctx, s).Result()
+		n, err := q.R.XLen(ctx, s).Result()
 		if err != nil {
 			continue
 		}
-		for _, g := range groups {
-			if g.Name != Group {
-				continue
+		var pending int64
+		if groups, err := q.R.XInfoGroups(ctx, s).Result(); err == nil {
+			for _, g := range groups {
+				if g.Name == Group {
+					pending = g.Pending
+				}
 			}
-			if s == StreamHigh {
-				l.High = g.Lag
-			} else {
-				l.Low = g.Lag
-			}
-			l.Pending += g.Pending
 		}
+		waiting := max(0, n-pending)
+		if s == StreamHigh {
+			l.High = waiting
+		} else {
+			l.Low = waiting
+		}
+		l.Pending += pending
 	}
 	l.Delayed, _ = q.R.ZCard(ctx, Delayed).Result()
 	l.WaitCodex, _ = q.R.ZCard(ctx, WaitCodex).Result()

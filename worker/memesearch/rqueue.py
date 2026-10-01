@@ -69,6 +69,14 @@ class JobQueue:
         n = int(await self._promote(keys=[DELAYED, STREAM_LOW], args=[now]))
         return n + int(await self._promote(keys=[WAIT_CODEX, STREAM_LOW], args=[now]))
 
+    async def backlog(self) -> int:
+        pipe = self.r.pipeline(transaction=False)
+        for key in (STREAM_HIGH, STREAM_LOW):
+            pipe.xlen(key)
+        for key in (DELAYED, WAIT_CODEX):
+            pipe.zcard(key)
+        return sum(int(n or 0) for n in await pipe.execute())
+
     async def codex_waiting(self) -> int:
         return int(await self.r.zcard(WAIT_CODEX))
 
