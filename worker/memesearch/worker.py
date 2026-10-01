@@ -123,6 +123,8 @@ class Worker:
                     await self.auto_retry_failed()
                 if tick % 60 == 45:
                     await self.pipeline.codex.refresh_idle()
+                if tick % 120 == 60:
+                    await self.refresh_tag_stats()
             except Exception as exc:
                 log.warning("maintenance: %s", exc)
             tick += 1
@@ -157,6 +159,14 @@ class Worker:
         for job_id in await self._unlocked([j["id"] for j in jobs], "ms:lock:import:"):
             log.info("resuming orphaned import %s", job_id)
             await self.queue.push(STREAM_HIGH, {"type": "import", "job_id": job_id})
+
+    async def refresh_tag_stats(self) -> None:
+        async with self.pool.acquire() as conn, conn.transaction():
+            await conn.execute("DELETE FROM tag_stats")
+            await conn.execute(
+                """INSERT INTO tag_stats (tag, n)
+                SELECT t, count(*) FROM memes, unnest(tags) t WHERE status = 'done' AND NOT hidden GROUP BY t"""
+            )
 
     async def auto_retry_failed(self) -> None:
         rows = await self.pool.fetch(
