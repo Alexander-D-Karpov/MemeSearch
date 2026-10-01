@@ -245,7 +245,7 @@ fused AS (
 		SELECT id, r, 1.0 AS w FROM tv
 		UNION ALL SELECT id, r, 1.3 FROM tg
 		UNION ALL SELECT id, r, 1.2 FROM tp
-		UNION ALL SELECT id, r, CASE WHEN d < $7 THEN 1.5 ELSE 0.4 END FROM cv
+		UNION ALL SELECT id, r, CASE WHEN d < $7 THEN 1.6 WHEN d <= $8 THEN 1.1 ELSE 0.3 END FROM cv
 	) x GROUP BY id
 )
 SELECT f.id, f.score FROM fused f JOIN memes m ON m.id = f.id
@@ -265,7 +265,7 @@ func (s *Service) Similar(ctx context.Context, id int64, limit int) ([]*store.Me
 	if clip == nil && text == nil {
 		return nil, nil
 	}
-	rows, err := s.store.Pool.Query(ctx, similarSQL, id, clip, text, limit*4, limit, similarMaxTagShare, similarSameTemplateDist)
+	rows, err := s.store.Pool.Query(ctx, similarSQL, id, clip, text, limit*4, limit, similarMaxTagShare, similarSameTemplateDist, s.lookMax)
 	if err != nil {
 		return nil, err
 	}
