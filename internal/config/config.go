@@ -32,6 +32,7 @@ type Config struct {
 	PageSize          int
 	TextMaxDist       float64
 	ClipMaxDist       float64
+	LookAlikeMaxDist  float64
 	TrustProxy        bool
 }
 
@@ -59,6 +60,7 @@ func Load() (*Config, error) {
 		PageSize:          int(envInt64("PAGE_SIZE", 48)),
 		TextMaxDist:       envFloat("SEARCH_TEXT_MAX_DIST", 2),
 		ClipMaxDist:       envFloat("SEARCH_CLIP_MAX_DIST", 2),
+		LookAlikeMaxDist:  envFloat("LOOKALIKE_MAX_DIST", 0.35),
 		TrustProxy:        envBool("TRUST_PROXY", true),
 	}
 	if c.DatabaseURL == "" {

@@ -87,7 +87,7 @@ func run() error {
 	q := queue.New(rdb)
 	q.Bump(ctx)
 	ml := mlclient.New(cfg.MLURL, cfg.InternalToken, rdb, cfg.EmbedCacheTTL)
-	sr := search.New(st, ml, rdb, q, cfg.SearchCacheTTL, cfg.TextMaxDist, cfg.ClipMaxDist)
+	sr := search.New(st, ml, rdb, q, cfg.SearchCacheTTL, cfg.TextMaxDist, cfg.ClipMaxDist, cfg.LookAlikeMaxDist)
 	a := auth.New(cfg, rdb)
 	in := &ingest.Ingester{Store: st, Queue: q, UploadDir: cfg.UploadDir, MaxBytes: cfg.MaxFileBytes}
 

@@ -1,0 +1,14 @@
+{{define "content"}}
+{{$m := .Data.Meme}}
+<div class="page-head">
+  <div>
+    <h1>Looks like <a href="/m/{{$m.ID}}">{{if $m.Title}}{{$m.Title}}{{else}}meme #{{$m.ID}}{{end}}</a></h1>
+    <p>Memes with a similar picture: the same template, character or scene, whatever the caption says.</p>
+  </div>
+</div>
+{{if .Data.Memes}}
+{{template "grid" .Data.Memes}}
+{{else}}
+<p class="empty">Nothing looks like this one yet.</p>
+{{end}}
+{{end}}

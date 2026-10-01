@@ -73,4 +73,7 @@ psql "$DATABASE_URL" -qc "UPDATE memes SET tg_cache_error='boom', tg_cache_attem
 [ "$(curl -fsS -H "$AUTH" -X POST "$BASE/api/v1/admin/tgcache/retry" | json 'd["queued"]')" = "1" ] || fail "telegram upload retry"
 [ "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$BASE/admin")" = "200" ] || fail "dashboard"
 
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/m/$ID/looks")" = "200" ] || fail "look-alike page"
+curl -fsS "$BASE/api/v1/memes/$ID/similar?mode=looks" | grep -q '"memes"' || fail "look-alike api"
+
 echo "smoke test passed"
