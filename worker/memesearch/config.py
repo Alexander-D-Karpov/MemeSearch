@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     work_dir: Path | None = None
 
     worker_concurrency: int = 4
+    background_concurrency: int = 1
     max_attempts: int = 3
     job_timeout_seconds: int = 900
     max_transient_retries: int = 12

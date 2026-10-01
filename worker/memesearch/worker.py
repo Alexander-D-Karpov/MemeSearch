@@ -56,6 +56,7 @@ class Worker:
         self.importer = Importer(self.pool, storage, self.redis)
         self.channels = ChannelImporter(self.s, self.pool, storage, self.redis)
         self.active = 0
+        self.background = 0
         self.phash_cursor = 0
         self.changed = asyncio.Condition()
 
@@ -65,10 +66,18 @@ class Worker:
             kind = msg.job.get("type")
             if kind == "process":
                 await self.pipeline.handle(msg.job)
-            elif kind == "import":
-                await self.importer.run(int(msg.job["job_id"]))
-            elif kind == "channel":
-                await self.channels.run(int(msg.job["id"]), float(msg.job.get("at") or 0))
+            elif kind in ("import", "channel"):
+                if self.background >= max(1, min(self.s.background_concurrency, self.s.worker_concurrency - 1)):
+                    await self.queue.delay(msg.job, 30)
+                    return
+                self.background += 1
+                try:
+                    if kind == "import":
+                        await self.importer.run(int(msg.job["job_id"]))
+                    else:
+                        await self.channels.run(int(msg.job["id"]), float(msg.job.get("at") or 0))
+                finally:
+                    self.background -= 1
             else:
                 log.warning("unknown job %s", msg.job)
         except asyncio.CancelledError:
