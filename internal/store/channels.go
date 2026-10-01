@@ -25,18 +25,22 @@ type Channel struct {
 	Skipped       int        `json:"skipped"`
 	Failed        int        `json:"failed"`
 	Filtered      int        `json:"filtered"`
+	OldestPostID  int64      `json:"oldest_post_id"`
+	HistoryDone   bool       `json:"history_done"`
+	HistoryPosts  int        `json:"history_posts"`
 	CreatedAt     time.Time  `json:"created_at"`
 	LastPolledAt  *time.Time `json:"last_polled_at"`
 	NextPollAt    time.Time  `json:"next_poll_at"`
 }
 
 const channelCols = `id, username, title, enabled, backfill_limit, last_post_id, status, error, added, duplicates,
-	skipped, failed, created_at, last_polled_at, next_poll_at, filtered`
+	skipped, failed, created_at, last_polled_at, next_poll_at, filtered, oldest_post_id, history_done, history_posts`
 
 func scanChannel(row pgx.Row) (*Channel, error) {
 	c := &Channel{}
 	err := row.Scan(&c.ID, &c.Username, &c.Title, &c.Enabled, &c.BackfillLimit, &c.LastPostID, &c.Status, &c.Error,
-		&c.Added, &c.Duplicates, &c.Skipped, &c.Failed, &c.CreatedAt, &c.LastPolledAt, &c.NextPollAt, &c.Filtered)
+		&c.Added, &c.Duplicates, &c.Skipped, &c.Failed, &c.CreatedAt, &c.LastPolledAt, &c.NextPollAt, &c.Filtered, &c.OldestPostID,
+		&c.HistoryDone, &c.HistoryPosts)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -82,7 +86,9 @@ type ChannelPatch struct {
 func (s *Store) UpdateChannel(ctx context.Context, id int64, p ChannelPatch) (*Channel, error) {
 	return scanChannel(s.Pool.QueryRow(ctx, `UPDATE channels SET
 		enabled = COALESCE($2, enabled),
-		backfill_limit = COALESCE($3, backfill_limit)
+		backfill_limit = COALESCE($3, backfill_limit),
+		history_done = CASE WHEN $3::int IS NULL THEN history_done
+			ELSE $3::int > 0 AND history_posts >= $3::int END
 		WHERE id=$1 RETURNING `+channelCols, id, p.Enabled, p.BackfillLimit))
 }
 

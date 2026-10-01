@@ -71,7 +71,7 @@ func (s *Server) apiChannelCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	backfill := 1000
+	backfill := 0
 	if req.BackfillLimit != nil {
 		backfill = max(0, *req.BackfillLimit)
 	}
