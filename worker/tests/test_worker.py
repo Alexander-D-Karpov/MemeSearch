@@ -69,3 +69,37 @@ def test_codex_session_closes_process_when_startup_fails(monkeypatch):
     asyncio.run(run())
     assert closed == [True]
     assert classify(BlockingIOError(11, "Resource temporarily unavailable")) == "transient"
+
+
+def test_background_jobs_never_take_every_slot():
+    class Recorder(FakeQueue):
+        def __init__(self):
+            super().__init__()
+            self.delayed = []
+
+        async def delay(self, job, seconds):
+            self.delayed.append((job["id"], seconds))
+
+    class SlowChannels:
+        def __init__(self):
+            self.running = 0
+
+        async def run(self, cid, at):
+            self.running += 1
+            await asyncio.sleep(0.05)
+
+    async def run():
+        w = Worker()
+        w.s.worker_concurrency, w.s.background_concurrency = 4, 1
+        w.queue, w.channels = Recorder(), SlowChannels()
+        w.changed, w.active, w.background = asyncio.Condition(), 2, 0
+        a = asyncio.create_task(w.handle(Message("ms:q:high", "1-0", {"type": "channel", "id": 1})))
+        await asyncio.sleep(0.01)
+        await w.handle(Message("ms:q:high", "2-0", {"type": "channel", "id": 2}))
+        await a
+        return w
+
+    w = asyncio.run(run())
+    assert w.channels.running == 1
+    assert w.queue.delayed == [(2, 30)]
+    assert w.queue.acked == ["2-0", "1-0"] and w.background == 0
