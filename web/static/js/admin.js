@@ -311,6 +311,35 @@
     });
   }
 
+  const live = $('#live[data-live]');
+  if (live) {
+    const status = $('#live-status');
+    const every = Number(live.dataset.live) || 5000;
+    let busy = false;
+    let failures = 0;
+    const stamp = (text) => { if (status) status.textContent = text; };
+    const tick = async () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        const res = await fetch(location.pathname + location.search, { headers: { Accept: 'text/html' }, cache: 'no-store' });
+        if (!res.ok) throw new Error(res.status);
+        const fresh = new DOMParser().parseFromString(await res.text(), 'text/html').querySelector('#live');
+        if (fresh && fresh.innerHTML !== live.innerHTML && !live.contains(document.activeElement)) live.innerHTML = fresh.innerHTML;
+        failures = 0;
+        stamp(`live · ${new Date().toLocaleTimeString()}`);
+      } catch {
+        failures += 1;
+        stamp(failures > 2 ? 'live · connection lost, retrying' : status?.textContent || '');
+      } finally {
+        busy = false;
+      }
+    };
+    stamp('live');
+    setInterval(tick, every);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+  }
+
   const settingsForm = $('#settings-form');
   if (settingsForm) {
     settingsForm.addEventListener('submit', async (e) => {

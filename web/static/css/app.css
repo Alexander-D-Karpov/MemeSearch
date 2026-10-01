@@ -333,6 +333,8 @@ label.check { flex-direction: row !important; align-items: center; gap: 8px; fon
   flex-direction: column;
   gap: 4px;
 }
+.live-status { font-weight: 400; margin-left: 8px; vertical-align: middle; }
+.eta { margin: 8px 0 0; }
 .stat b { font: 700 1.5rem/1.1 var(--mono); font-variant-numeric: tabular-nums; }
 .stat span { color: var(--muted); font-size: 0.82rem; }
 
