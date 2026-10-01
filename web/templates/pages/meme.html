@@ -97,6 +97,12 @@
   </div>
 </article>
 
+{{if .Data.LookAlike}}
+<section class="similar">
+  <h2>Looks similar{{if .Data.MoreLooks}} <a class="small" href="/m/{{.Data.Meme.ID}}/looks">show all</a>{{end}}</h2>
+  {{template "grid" .Data.LookAlike}}
+</section>
+{{end}}
 {{if .Data.Similar}}
 <section class="similar">
   <h2>Similar memes</h2>

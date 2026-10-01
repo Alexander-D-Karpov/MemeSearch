@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"log/slog"
 	"strings"
 	"time"
@@ -26,10 +27,11 @@ type Service struct {
 	cacheTTL time.Duration
 	textMax  float64
 	clipMax  float64
+	lookMax  float64
 }
 
-func New(s *store.Store, ml *mlclient.Client, rdb *redis.Client, q *queue.Queue, cacheTTL time.Duration, textMax, clipMax float64) *Service {
-	return &Service{store: s, ml: ml, rdb: rdb, q: q, cacheTTL: cacheTTL, textMax: textMax, clipMax: clipMax}
+func New(s *store.Store, ml *mlclient.Client, rdb *redis.Client, q *queue.Queue, cacheTTL time.Duration, textMax, clipMax, lookMax float64) *Service {
+	return &Service{store: s, ml: ml, rdb: rdb, q: q, cacheTTL: cacheTTL, textMax: textMax, clipMax: clipMax, lookMax: lookMax}
 }
 
 type Hit struct {
@@ -277,6 +279,37 @@ func (s *Service) Similar(ctx context.Context, id int64, limit int) ([]*store.Me
 		ids = append(ids, mid)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if raw, err := json.Marshal(ids); err == nil {
+		s.rdb.Set(ctx, key, raw, time.Hour)
+	}
+	return s.store.MemesByIDs(ctx, ids)
+}
+
+const lookAlikeSQL = `
+SELECT id FROM (
+	SELECT id, clip_vec <=> $2 AS d FROM memes
+	WHERE clip_vec IS NOT NULL AND status = 'done' AND NOT hidden AND id <> $1
+	ORDER BY clip_vec <=> $2 LIMIT $3
+) s WHERE d <= $4 ORDER BY d`
+
+func (s *Service) LookAlike(ctx context.Context, id int64, limit int) ([]*store.Meme, error) {
+	key := fmt.Sprintf("ms:lookalike:%d:%d:%d", s.q.Version(ctx), id, limit)
+	var ids []int64
+	if raw, err := s.rdb.Get(ctx, key).Bytes(); err == nil && json.Unmarshal(raw, &ids) == nil {
+		return s.store.MemesByIDs(ctx, ids)
+	}
+	clip, _, err := s.store.Vectors(ctx, id)
+	if err != nil || clip == nil {
+		return nil, err
+	}
+	rows, err := s.store.Pool.Query(ctx, lookAlikeSQL, id, clip, limit, s.lookMax)
+	if err != nil {
+		return nil, err
+	}
+	ids, err = pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
 		return nil, err
 	}
 	if raw, err := json.Marshal(ids); err == nil {

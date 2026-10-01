@@ -96,6 +96,8 @@ Usage bars refresh after every analysis and every `CODEX_USAGE_REFRESH_MINUTES` 
 
 ## Search tuning
 
+- Meme pages show **Looks similar** (same picture/template by image vectors, cut off at `LOOKALIKE_MAX_DIST`, full list at `/m/{id}/looks`) and **Similar memes** (same topic: rare shared tags, template, people, meaning).
+
 - `SEARCH_TEXT_MAX_DIST` / `SEARCH_CLIP_MAX_DIST` (cosine distance, default `2` = off) drop vector-only matches that are too far, so nonsense queries return nothing. Start with `0.25` / `0.95` and adjust by looking at results.
 - Results are cached in Redis per query and invalidated on every change.
 

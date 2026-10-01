@@ -103,9 +103,11 @@ func (s *Server) partialResults(w http.ResponseWriter, r *http.Request) {
 }
 
 type MemePage struct {
-	Meme    *store.Meme
-	Similar []*store.Meme
-	Sources []*store.MemeSource
+	Meme      *store.Meme
+	Similar   []*store.Meme
+	LookAlike []*store.Meme
+	MoreLooks bool
+	Sources   []*store.MemeSource
 }
 
 func (s *Server) visibleMeme(r *http.Request) (*store.Meme, error) {
@@ -135,11 +137,21 @@ func (s *Server) pageMeme(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	similar, err := s.search.Similar(r.Context(), m.ID, 24)
+	looks, err := s.search.LookAlike(r.Context(), m.ID, lookAlikeOnPage+1)
+	if err != nil {
+		slog.Warn("look alike", "err", err)
+	}
+	more := len(looks) > lookAlikeOnPage
+	if more {
+		looks = looks[:lookAlikeOnPage]
+	}
+	similar, err := s.search.Similar(r.Context(), m.ID, 24+len(looks))
 	if err != nil {
 		slog.Warn("similar", "err", err)
 	}
+	similar = withoutIDs(similar, looks, 24)
 	s.decorate(similar...)
+	s.decorate(looks...)
 	sources, err := s.store.MemeSources(r.Context(), m.ID)
 	if err != nil {
 		slog.Warn("sources", "err", err)
@@ -153,7 +165,7 @@ func (s *Server) pageMeme(w http.ResponseWriter, r *http.Request) {
 		Title:       title,
 		Description: desc,
 		OG:          s.memeOG(m),
-		Data:        MemePage{Meme: m, Similar: similar, Sources: sources},
+		Data:        MemePage{Meme: m, Similar: similar, LookAlike: looks, MoreLooks: more, Sources: sources},
 	})
 }
 
@@ -266,7 +278,12 @@ func (s *Server) apiSimilar(w http.ResponseWriter, r *http.Request) {
 		storeErr(w, err)
 		return
 	}
-	similar, err := s.search.Similar(r.Context(), m.ID, intParam(r, "limit", 24, 1, 100))
+	limit := intParam(r, "limit", 24, 1, 200)
+	find := s.search.Similar
+	if r.URL.Query().Get("mode") == "looks" {
+		find = s.search.LookAlike
+	}
+	similar, err := find(r.Context(), m.ID, limit)
 	if err != nil {
 		storeErr(w, err)
 		return
@@ -294,4 +311,52 @@ func (s *Server) searchCanonical(q, kind string) string {
 		return s.cfg.PublicURL + "/"
 	}
 	return s.cfg.PublicURL + "/?" + v.Encode()
+}
+
+const lookAlikeOnPage = 12
+
+func withoutIDs(list, exclude []*store.Meme, limit int) []*store.Meme {
+	skip := make(map[int64]bool, len(exclude))
+	for _, m := range exclude {
+		skip[m.ID] = true
+	}
+	out := make([]*store.Meme, 0, limit)
+	for _, m := range list {
+		if !skip[m.ID] && len(out) < limit {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+type LooksPage struct {
+	Meme  *store.Meme
+	Memes []*store.Meme
+}
+
+func (s *Server) pageLookAlike(w http.ResponseWriter, r *http.Request) {
+	m, err := s.visibleMeme(r)
+	if errors.Is(err, store.ErrNotFound) {
+		s.notFound(w, r)
+		return
+	}
+	if err != nil {
+		slog.Error("look alike", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	looks, err := s.search.LookAlike(r.Context(), m.ID, 200)
+	if err != nil {
+		slog.Warn("look alike", "err", err)
+	}
+	s.decorate(looks...)
+	title := firstNonEmpty(m.Title, "Meme #"+strconv.FormatInt(m.ID, 10))
+	og := s.memeOG(m)
+	og.Video = ""
+	s.render(w, r, http.StatusOK, "looks", Page{
+		Title:       "Looks like: " + title,
+		Description: "Memes that look like " + title,
+		OG:          og,
+		Data:        LooksPage{Meme: m, Memes: looks},
+	})
 }
