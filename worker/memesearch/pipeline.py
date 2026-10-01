@@ -117,6 +117,9 @@ class Pipeline:
         full = analyze or meme["analyzed_at"] is None
         requested_at = job.get("at")
         if full and requested_at and meme["analyzed_at"] and meme["analyzed_at"].timestamp() >= float(requested_at):
+            if meme["status"] == "done" and meme["clip_vec"] is not None and meme["text_vec"] is not None:
+                log.debug("meme %s is already analyzed, skipping duplicate job", meme_id)
+                return
             log.info("meme %s was analyzed after this job was queued, embedding only", meme_id)
             full = False
         if meme["locked"]:

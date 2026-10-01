@@ -147,12 +147,15 @@ class Worker:
         claimed = await self.queue.reclaim(self.consumer, idle_ms)
         for msg in claimed:
             self.spawn(msg)
+        drained = await self.queue.backlog() <= self.s.worker_concurrency + len(claimed)
         stale = await self.pool.fetch(
             """SELECT id FROM memes WHERE
             (status='processing' AND ($2 OR updated_at < now() - make_interval(secs => $1)))
-            OR (status='pending' AND updated_at < now() - interval '6 hours')""",
+            OR ($3 AND status='pending' AND updated_at < now() - interval '30 minutes')
+            ORDER BY id LIMIT 5000""",
             self.s.job_timeout_seconds * 2,
             startup,
+            drained,
         )
         orphans = await self._unlocked([r["id"] for r in stale], "ms:lock:meme:")
         if orphans:
