@@ -2,13 +2,13 @@
 <div class="page-head">
   <div>
     <h1>Telegram channels</h1>
-    <p>Public channels are read from their web preview at t.me/s/name. New posts are fetched on a schedule. A meme that is already in the library, or looks the same, is not added again: the post link is added to that meme as another source. Videos longer than the configured limit are skipped.</p>
+    <p>Public channels are read from their web preview at t.me/s/name. New posts are fetched on a schedule. A meme that is already in the library, or looks the same, is not added again: the post link is added to that meme as another source. Videos longer than the configured limit are skipped. The whole history is loaded in batches of a few hundred posts; the number next to the button limits how many old posts to import (0 = all).</p>
   </div>
 </div>
 
 <form id="channel-add" class="row">
   <input name="channel" placeholder="@channel or https://t.me/channel" required autocomplete="off">
-  <input name="backfill_limit" type="number" min="0" value="1000" class="prio" aria-label="How many old posts to import" title="How many old posts to import on the first run, 0 for the whole history">
+  <input name="backfill_limit" type="number" min="0" value="0" class="prio" aria-label="How many old posts to import, 0 for all" title="How many old posts to import, 0 for the whole history">
   <button class="btn btn-primary" type="submit">Add channel</button>
 </form>
 
@@ -20,7 +20,8 @@
     <tr data-channel="{{.ID}}">
       <td><a href="https://t.me/{{.Username}}" rel="noopener" target="_blank">@{{.Username}}</a>{{with .Title}}<br><span class="small muted">{{.}}</span>{{end}}</td>
       <td class="status-{{.Status}}">{{.Status}}{{with .Error}}<br><span class="small error">{{truncate 200 .}}</span>{{end}}</td>
-      <td>{{if .LastPostID}}<a href="https://t.me/{{.Username}}/{{.LastPostID}}" rel="noopener" target="_blank">{{.LastPostID}}</a>{{else}}—{{end}}</td>
+      <td>{{if .LastPostID}}<a href="https://t.me/{{.Username}}/{{.LastPostID}}" rel="noopener" target="_blank">{{.LastPostID}}</a>{{else}}—{{end}}
+        <br><span class="small muted">{{if .HistoryDone}}history loaded{{else if .OldestPostID}}history: back to #{{.OldestPostID}}{{else}}history pending{{end}}</span></td>
       <td>{{.Added}}</td><td>{{.Duplicates}}</td><td>{{.Skipped}}</td><td>{{.Filtered}}</td><td>{{.Failed}}</td>
       <td>{{ago .LastPolledAt}}</td>
       <td><input type="checkbox" data-channel-enabled{{if .Enabled}} checked{{end}} aria-label="Enabled"></td>

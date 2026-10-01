@@ -207,33 +207,46 @@ class ChannelImporter:
         cid = ch["id"]
         await self.pool.execute("UPDATE channels SET status='running', error='' WHERE id=$1", cid)
         c = Counters()
+        history_left = False
         try:
             async with self._client() as client:
                 posts = await self._collect(client, ch)
                 held = False
                 for post in posts:
-                    ok = True
-                    reason = self.filter.check(post.text, post.links, post.buttons, ch["username"]) if post.media else ""
-                    if reason:
-                        log.info("skip @%s/%s: %s", ch["username"], post.id, reason)
-                        c.filtered += len(post.media)
-                    for item in [] if reason else post.media:
-                        ok = await self._item(client, ch, post, item, c) and ok
-                    held = held or not ok
+                    held = not await self._handle_post(client, ch, post, c) or held
                     await self._progress(cid, c, 0 if held else post.id)
+                if posts and not ch["oldest_post_id"]:
+                    await self.pool.execute(
+                        "UPDATE channels SET oldest_post_id=$2, history_posts=history_posts+$3 WHERE id=$1 AND oldest_post_id=0",
+                        cid,
+                        posts[0].id,
+                        len(posts),
+                    )
+                fresh = await self.pool.fetchrow("SELECT * FROM channels WHERE id=$1", cid)
+                if fresh and not fresh["history_done"] and fresh["last_post_id"]:
+                    history_left = not await self._history(client, dict(fresh), c)
             await self.pool.execute(
                 """UPDATE channels SET status='idle', last_polled_at=now(),
                 next_poll_at=now() + make_interval(mins => $2) WHERE id=$1""",
                 cid,
-                self.s.channel_poll_minutes,
+                1 if history_left else self.s.channel_poll_minutes,
             )
-            log.info("channel @%s: +%d, %d duplicates, %d skipped", ch["username"], c.added, c.duplicates, c.skipped)
+            log.info(
+                "channel @%s: +%d, %d duplicates, %d skipped, %d filtered%s",
+                ch["username"],
+                c.added,
+                c.duplicates,
+                c.skipped,
+                c.filtered,
+                ", more history to load" if history_left else "",
+            )
         except asyncio.CancelledError:
             await self._progress(cid, c, 0)
             await self.pool.execute("UPDATE channels SET status='pending', next_poll_at=now() WHERE id=$1", cid)
             raise
         except Exception as exc:
             log.warning("channel @%s failed: %s", ch["username"], exc)
+            await self._progress(cid, c, 0)
             await self.pool.execute(
                 """UPDATE channels SET status='failed', error=$2, last_polled_at=now(),
                 next_poll_at=now() + make_interval(mins => $3) WHERE id=$1""",
@@ -241,6 +254,54 @@ class ChannelImporter:
                 (str(exc) or type(exc).__name__)[:2000],
                 self.s.channel_poll_minutes,
             )
+
+    async def _handle_post(self, client: httpx.AsyncClient, ch: dict, post: Post, c: Counters) -> bool:
+        reason = self.filter.check(post.text, post.links, post.buttons, ch["username"]) if post.media else ""
+        if reason:
+            log.info("skip @%s/%s: %s", ch["username"], post.id, reason)
+            c.filtered += len(post.media)
+            return True
+        ok = True
+        for item in post.media:
+            ok = await self._item(client, ch, post, item, c) and ok
+        return ok
+
+    async def _history(self, client: httpx.AsyncClient, ch: dict, c: Counters) -> bool:
+        cid, username = ch["id"], ch["username"]
+        budget = self.s.channel_history_batch
+        if ch["backfill_limit"]:
+            budget = min(budget, ch["backfill_limit"] - ch["history_posts"])
+        if budget <= 0:
+            await self.pool.execute("UPDATE channels SET history_done=true WHERE id=$1", cid)
+            return True
+        before = ch["oldest_post_id"] or ch["last_post_id"] + 1
+        done = 0
+        while done < budget:
+            await asyncio.sleep(self.s.channel_page_delay)
+            page = parse_page(await self._fetch(client, f"{self.base}/s/{username}", {"before": before}), username)
+            older = sorted((p for p in page.posts if p.id < before), key=lambda p: p.id, reverse=True)
+            if not older:
+                await self.pool.execute("UPDATE channels SET history_done=true WHERE id=$1", cid)
+                return True
+            for post in older:
+                if done >= budget:
+                    break
+                if not await self._handle_post(client, ch, post, c):
+                    await self._progress(cid, c, 0)
+                    return False
+                done += 1
+                before = post.id
+                await self._progress(cid, c, 0)
+                await self.pool.execute(
+                    "UPDATE channels SET oldest_post_id=$2, history_posts=history_posts+1 WHERE id=$1", cid, post.id
+                )
+            if before <= 1:
+                await self.pool.execute("UPDATE channels SET history_done=true WHERE id=$1", cid)
+                return True
+        if ch["backfill_limit"] and ch["history_posts"] + done >= ch["backfill_limit"]:
+            await self.pool.execute("UPDATE channels SET history_done=true WHERE id=$1", cid)
+            return True
+        return False
 
     async def _progress(self, cid: int, c: Counters, last_post: int) -> None:
         await self.pool.execute(
@@ -277,7 +338,11 @@ class ChannelImporter:
     async def _collect(self, client: httpx.AsyncClient, ch: dict) -> list[Post]:
         username = ch["username"]
         last = ch["last_post_id"]
-        limit = ch["backfill_limit"] if last == 0 else 0
+        limit = 0
+        if last == 0:
+            limit = self.s.channel_history_batch
+            if ch["backfill_limit"]:
+                limit = min(limit, ch["backfill_limit"])
         found: dict[int, Post] = {}
         before: int | None = None
         first = True

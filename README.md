@@ -71,7 +71,7 @@ The worker and ml containers run under `worker/seccomp-userns.json` (Docker defa
 
 `/admin/channels`: add a public channel (`@name` or `https://t.me/name`). The worker reads the channel's web preview (`t.me/s/name`), no bot or account is needed; private channels and channels with the preview turned off cannot be read.
 
-- First run imports up to **backfill** old posts (0 = whole history), then new posts are fetched every `CHANNEL_POLL_MINUTES`. **Check now** fetches immediately.
+- The whole history is imported by default, `CHANNEL_HISTORY_BATCH` posts per run, one run a minute, oldest last; the number next to **Add channel** limits it (0 = all). The Channels page shows how far back it got. New posts are fetched every `CHANNEL_POLL_MINUTES`. **Check now** fetches immediately.
 - Each imported meme links to its post, and the post text is passed to the analysis as the caption.
 - Dedup: exact file (sha256) or same picture (256-bit perceptual hash within `CHANNEL_DEDUP_DISTANCE` bits, compared against the whole library) is not added again; the post link is attached to the existing meme instead, so a meme can show several sources.
 - Ads and non-memes are filtered in two steps. Before download, the post text is checked: "#реклама", "erid", INN, promo codes, casino/betting and extra words from `CHANNEL_SKIP_WORDS` skip it right away; invite/bot links, links to other channels, buttons and promo wording add up to a skip; text longer than `CHANNEL_MAX_TEXT_CHARS` counts as an article. After analysis, Codex also flags ads and non-memes, and such channel imports are hidden (not deleted) with the reason shown; find them under Memes → hidden and unhide if wrong. Counts are in the **Filtered** column.
