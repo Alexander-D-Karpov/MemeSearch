@@ -188,9 +188,46 @@ func (s *Service) compute(ctx context.Context, query, kind string) (cached, erro
 	return cached{Hits: hits, Semantic: semantic}, rows.Err()
 }
 
+const (
+	similarMaxTagShare      = 0.03
+	similarSameTemplateDist = 0.15
+)
+
 const similarSQL = `
-WITH cv AS (
-	SELECT id, row_number() OVER (ORDER BY d) AS r
+WITH me AS (
+	SELECT tags, people, lower(template) AS tpl FROM memes WHERE id = $1
+),
+total AS (
+	SELECT greatest(count(*), 1)::float8 AS n FROM memes WHERE status = 'done' AND NOT hidden
+),
+idf AS (
+	SELECT ts.tag, ln((SELECT n FROM total) / ts.n) AS w
+	FROM tag_stats ts, me
+	WHERE ts.tag = ANY(me.tags) AND ts.n > 1 AND ts.n <= (SELECT n FROM total) * $6
+),
+tg AS (
+	SELECT id, row_number() OVER (ORDER BY s DESC, id DESC) AS r FROM (
+		SELECT m.id, sum(idf.w) AS s
+		FROM memes m JOIN idf ON idf.tag = ANY(m.tags)
+		WHERE m.tags && (SELECT coalesce(array_agg(tag), '{}') FROM idf)
+			AND m.id <> $1 AND m.status = 'done' AND NOT m.hidden
+		GROUP BY m.id ORDER BY s DESC LIMIT $4
+	) x
+),
+tp AS (
+	SELECT id, row_number() OVER (ORDER BY s DESC, id DESC) AS r FROM (
+		SELECT m.id,
+			(CASE WHEN me.tpl <> '' AND lower(m.template) = me.tpl THEN 2 ELSE 0 END)
+			+ cardinality(ARRAY(SELECT unnest(m.people) INTERSECT SELECT unnest(me.people))) AS s
+		FROM memes m, me
+		WHERE m.id <> $1 AND m.status = 'done' AND NOT m.hidden
+			AND ((me.tpl <> '' AND lower(m.template) = me.tpl AND m.template <> '')
+				OR (cardinality(me.people) > 0 AND m.people && me.people))
+		ORDER BY s DESC LIMIT $4
+	) x
+),
+cv AS (
+	SELECT id, d, row_number() OVER (ORDER BY d) AS r
 	FROM (SELECT id, clip_vec <=> $2 AS d FROM memes
 		WHERE $2::vector IS NOT NULL AND clip_vec IS NOT NULL AND status = 'done' AND NOT hidden
 		ORDER BY clip_vec <=> $2 LIMIT $4) s
@@ -203,8 +240,10 @@ tv AS (
 ),
 fused AS (
 	SELECT id, sum(w / (30.0 + r)) AS score FROM (
-		SELECT id, r, 1.0 AS w FROM cv
-		UNION ALL SELECT id, r, 1.0 FROM tv
+		SELECT id, r, 1.0 AS w FROM tv
+		UNION ALL SELECT id, r, 1.3 FROM tg
+		UNION ALL SELECT id, r, 1.2 FROM tp
+		UNION ALL SELECT id, r, CASE WHEN d < $7 THEN 1.5 ELSE 0.4 END FROM cv
 	) x GROUP BY id
 )
 SELECT f.id, f.score FROM fused f JOIN memes m ON m.id = f.id
@@ -224,7 +263,7 @@ func (s *Service) Similar(ctx context.Context, id int64, limit int) ([]*store.Me
 	if clip == nil && text == nil {
 		return nil, nil
 	}
-	rows, err := s.store.Pool.Query(ctx, similarSQL, id, clip, text, limit*4, limit)
+	rows, err := s.store.Pool.Query(ctx, similarSQL, id, clip, text, limit*4, limit, similarMaxTagShare, similarSameTemplateDist)
 	if err != nil {
 		return nil, err
 	}
