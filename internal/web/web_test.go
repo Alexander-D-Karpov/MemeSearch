@@ -1,9 +1,15 @@
 package web
 
 import (
+	"bytes"
+	"html"
 	"html/template"
 	"net/http/httptest"
+	"net/url"
+	"regexp"
 	"testing"
+
+	"github.com/Alexander-D-Karpov/MemeSearch/internal/store"
 )
 
 func TestSafeNext(t *testing.T) {
@@ -83,6 +89,48 @@ func TestTemplatesParse(t *testing.T) {
 	for _, name := range []string{"index", "meme", "login", "error", "admin/dashboard", "admin/upload", "admin/memes", "admin/edit", "admin/codex", "admin/settings"} {
 		if _, ok := s.pages[name]; !ok {
 			t.Errorf("template %q not loaded", name)
+		}
+	}
+}
+
+func TestMemeChipLinksDecodeToTheTag(t *testing.T) {
+	s := &Server{version: "test"}
+	if err := s.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	m := &store.Meme{
+		ID:       1,
+		Status:   "done",
+		Kind:     "image",
+		Template: "Поле чудес",
+		Tags:     []string{"леонид якубович", "что падает каждый день"},
+		People:   []string{"Леонид Якубович — «Поле чудес»"},
+		Objects:  []string{"microphone / микрофон"},
+		Sounds:   []string{"music / музыка"},
+		Song:     "Artist — Песня & Co",
+	}
+	var buf bytes.Buffer
+	if err := s.pages["meme"].ExecuteTemplate(&buf, "layout", Page{Title: "x", Data: MemePage{Meme: m}}); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"Поле чудес": false, "Artist — Песня & Co": false}
+	for _, v := range append(append(append(append([]string{}, m.Tags...), m.People...), m.Objects...), m.Sounds...) {
+		want[v] = false
+	}
+	for _, href := range regexp.MustCompile(`href="/\?q=([^"]*)"`).FindAllStringSubmatch(buf.String(), -1) {
+		u, err := url.Parse("/?q=" + html.UnescapeString(href[1]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := u.Query().Get("q")
+		if _, ok := want[q]; !ok {
+			t.Errorf("link %q searches for %q", href[1], q)
+		}
+		want[q] = true
+	}
+	for v, seen := range want {
+		if !seen {
+			t.Errorf("no search link for %q", v)
 		}
 	}
 }
