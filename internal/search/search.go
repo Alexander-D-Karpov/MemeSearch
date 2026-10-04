@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pgvector/pgvector-go"
 	"github.com/redis/go-redis/v9"
@@ -53,6 +54,20 @@ type cached struct {
 
 const candidates = 240
 
+const (
+	fuzzyMinRunes = 4
+	fuzzyMaxRunes = 40
+	fuzzyMaxWords = 4
+	fuzzyExactMin = 20
+	fuzzyBudget   = 300 * time.Millisecond
+)
+
+const fuzzySQL = `
+SELECT m.id FROM memes m
+WHERE $1 <% m.search_text AND m.status = 'done' AND NOT m.hidden AND ($2 = '' OR m.kind = $2)
+ORDER BY word_similarity($1, m.search_text) DESC, m.id DESC
+LIMIT $3`
+
 const hybridSQL = `
 WITH tq AS (
 	SELECT websearch_to_tsquery('simple', $1) || websearch_to_tsquery('russian', $1) || websearch_to_tsquery('english', $1) AS q
@@ -65,15 +80,7 @@ fts AS (
 	LIMIT $5
 ),
 trg AS (
-	SELECT id, row_number() OVER (ORDER BY sim DESC, id DESC) AS r
-	FROM (
-		SELECT m.id, word_similarity($1, m.search_text) AS sim
-		FROM memes m
-		WHERE $1 <% m.search_text AND m.status = 'done' AND NOT m.hidden AND ($4 = '' OR m.kind = $4)
-			AND char_length($1) >= 4 AND NOT EXISTS (SELECT 1 FROM fts OFFSET 19)
-		ORDER BY sim DESC, m.id DESC
-		LIMIT $5
-	) s
+	SELECT id, ord AS r FROM unnest($8::bigint[]) WITH ORDINALITY AS t(id, ord)
 ),
 tv AS (
 	SELECT id, row_number() OVER (ORDER BY d) AS r
@@ -105,7 +112,7 @@ fused AS (
 	) x
 	GROUP BY id
 )
-SELECT f.id, f.score
+SELECT f.id, f.score, (SELECT count(*) FROM fts)
 FROM fused f JOIN memes m ON m.id = f.id
 WHERE m.status = 'done' AND NOT m.hidden AND ($4 = '' OR m.kind = $4)
 ORDER BY f.score DESC, f.id DESC
@@ -159,6 +166,43 @@ func (s *Service) Search(ctx context.Context, query, kind string, limit, offset 
 	return res, nil
 }
 
+func (s *Service) fuzzy(ctx context.Context, query, kind string) []int64 {
+	if n := utf8.RuneCountInString(query); n < fuzzyMinRunes || n > fuzzyMaxRunes || len(strings.Fields(query)) > fuzzyMaxWords {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, fuzzyBudget)
+	defer cancel()
+	rows, err := s.store.Pool.Query(ctx, fuzzySQL, query, kind, candidates)
+	if err != nil {
+		slog.Info("fuzzy search skipped", "err", err)
+		return nil
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		slog.Info("fuzzy search skipped", "err", err)
+		return nil
+	}
+	return ids
+}
+
+func (s *Service) hybrid(ctx context.Context, query, kind string, text, clip *pgvector.Vector, fuzzy []int64) ([]Hit, int, error) {
+	rows, err := s.store.Pool.Query(ctx, hybridSQL, query, text, clip, kind, candidates, s.textMax, s.clipMax, fuzzy)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var hits []Hit
+	exact := 0
+	for rows.Next() {
+		var h Hit
+		if err := rows.Scan(&h.ID, &h.Score, &exact); err != nil {
+			return nil, 0, err
+		}
+		hits = append(hits, h)
+	}
+	return hits, exact, rows.Err()
+}
+
 func (s *Service) compute(ctx context.Context, query, kind string) (cached, error) {
 	var clip, text *pgvector.Vector
 	semantic := false
@@ -175,20 +219,18 @@ func (s *Service) compute(ctx context.Context, query, kind string) (cached, erro
 		}
 		semantic = clip != nil || text != nil
 	}
-	rows, err := s.store.Pool.Query(ctx, hybridSQL, query, text, clip, kind, candidates, s.textMax, s.clipMax)
+	hits, exact, err := s.hybrid(ctx, query, kind, text, clip, []int64{})
 	if err != nil {
 		return cached{}, err
 	}
-	defer rows.Close()
-	var hits []Hit
-	for rows.Next() {
-		var h Hit
-		if err := rows.Scan(&h.ID, &h.Score); err != nil {
-			return cached{}, err
+	if exact < fuzzyExactMin {
+		if ids := s.fuzzy(ctx, query, kind); len(ids) > 0 {
+			if hits, _, err = s.hybrid(ctx, query, kind, text, clip, ids); err != nil {
+				return cached{}, err
+			}
 		}
-		hits = append(hits, h)
 	}
-	return cached{Hits: hits, Semantic: semantic}, rows.Err()
+	return cached{Hits: hits, Semantic: semantic}, nil
 }
 
 const (
