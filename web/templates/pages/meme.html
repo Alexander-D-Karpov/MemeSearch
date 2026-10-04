@@ -39,26 +39,26 @@
     {{if or $m.Song $m.Sounds}}
     <section>
       <span class="label">Sound</span>
-      {{with $m.Song}}<p class="song">♪ <a href="/?q={{q .}}">{{.}}</a></p>{{end}}
-      {{with $m.Sounds}}<div class="chips">{{range .}}<a class="chip" href="/?q={{q .}}">{{.}}</a>{{end}}</div>{{end}}
+      {{with $m.Song}}<p class="song">♪ <a href="/?q={{.}}">{{.}}</a></p>{{end}}
+      {{with $m.Sounds}}<div class="chips">{{range .}}<a class="chip" href="/?q={{.}}">{{.}}</a>{{end}}</div>{{end}}
     </section>
     {{end}}
     {{if $m.People}}
     <section>
       <span class="label">Who</span>
-      <div class="chips">{{range $m.People}}<a class="chip" href="/?q={{q .}}">{{.}}</a>{{end}}</div>
+      <div class="chips">{{range $m.People}}<a class="chip" href="/?q={{.}}">{{.}}</a>{{end}}</div>
     </section>
     {{end}}
     {{if $m.Objects}}
     <section>
       <span class="label">Objects</span>
-      <div class="chips">{{range $m.Objects}}<a class="chip" href="/?q={{q .}}">{{.}}</a>{{end}}</div>
+      <div class="chips">{{range $m.Objects}}<a class="chip" href="/?q={{.}}">{{.}}</a>{{end}}</div>
     </section>
     {{end}}
     {{if $m.Tags}}
     <section>
       <span class="label">Tags</span>
-      <div class="chips">{{range $m.Tags}}<a class="chip" href="/?q={{q .}}">#{{.}}</a>{{end}}</div>
+      <div class="chips">{{range $m.Tags}}<a class="chip" href="/?q={{.}}">#{{.}}</a>{{end}}</div>
     </section>
     {{end}}
 
@@ -72,7 +72,7 @@
     {{end}}
 
     <dl class="facts">
-      {{if $m.Template}}<dt>Template</dt><dd><a href="/?q={{q $m.Template}}">{{$m.Template}}</a></dd>{{end}}
+      {{if $m.Template}}<dt>Template</dt><dd><a href="/?q={{$m.Template}}">{{$m.Template}}</a></dd>{{end}}
       <dt>Type</dt><dd>{{$m.Kind}}{{if $m.DurationMs}}, {{dur $m.DurationMs}}{{end}}</dd>
       <dt>Size</dt><dd>{{$m.Width}}×{{$m.Height}} · {{bytes $m.SizeBytes}}</dd>
       {{if $m.Mood}}<dt>Mood</dt><dd>{{$m.Mood}}</dd>{{end}}
