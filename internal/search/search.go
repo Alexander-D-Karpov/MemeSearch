@@ -70,6 +70,7 @@ trg AS (
 		SELECT m.id, word_similarity($1, m.search_text) AS sim
 		FROM memes m
 		WHERE $1 <% m.search_text AND m.status = 'done' AND NOT m.hidden AND ($4 = '' OR m.kind = $4)
+			AND char_length($1) >= 4 AND NOT EXISTS (SELECT 1 FROM fts OFFSET 19)
 		ORDER BY sim DESC, m.id DESC
 		LIMIT $5
 	) s
