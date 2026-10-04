@@ -68,7 +68,7 @@ class Worker:
                 await self.pipeline.handle(msg.job)
             elif kind in ("import", "channel"):
                 if self.background >= max(1, min(self.s.background_concurrency, self.s.worker_concurrency - 1)):
-                    await self.queue.delay(msg.job, 30)
+                    await self.queue.delay(msg.job, 30, high=True)
                     return
                 self.background += 1
                 try:

@@ -12,6 +12,7 @@ const (
 	StreamHigh   = "ms:q:high"
 	StreamLow    = "ms:q:low"
 	Delayed      = "ms:q:delayed"
+	DelayedHigh  = "ms:q:delayed:high"
 	WaitCodex    = "ms:q:wait:codex"
 	IndexVersion = "ms:index:ver"
 	Events       = "ms:events"
@@ -115,6 +116,9 @@ func (q *Queue) Lengths(ctx context.Context) Lengths {
 		l.Pending += pending
 	}
 	l.Delayed, _ = q.R.ZCard(ctx, Delayed).Result()
+	if n, err := q.R.ZCard(ctx, DelayedHigh).Result(); err == nil {
+		l.Delayed += n
+	}
 	l.WaitCodex, _ = q.R.ZCard(ctx, WaitCodex).Result()
 	return l
 }

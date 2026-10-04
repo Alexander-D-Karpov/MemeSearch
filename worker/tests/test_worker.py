@@ -80,8 +80,8 @@ def test_background_jobs_never_take_every_slot():
             super().__init__()
             self.delayed = []
 
-        async def delay(self, job, seconds):
-            self.delayed.append((job["id"], seconds))
+        async def delay(self, job, seconds, high=False):
+            self.delayed.append((job["id"], seconds, high))
 
     class SlowChannels:
         def __init__(self):
@@ -104,7 +104,7 @@ def test_background_jobs_never_take_every_slot():
 
     w = asyncio.run(run())
     assert w.channels.running == 1
-    assert w.queue.delayed == [(2, 30)]
+    assert w.queue.delayed == [(2, 30, True)]
     assert w.queue.acked == ["2-0", "1-0"] and w.background == 0
 
 
