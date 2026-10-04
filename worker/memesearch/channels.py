@@ -49,6 +49,23 @@ class ChannelUnavailable(Exception):
     pass
 
 
+class RateLimited(Exception):
+    pass
+
+
+class ChannelMissing(Exception):
+    pass
+
+
+NETWORK_FAILURES_BEFORE_FAILED = 6
+
+
+def is_network_error(exc: BaseException) -> bool:
+    if isinstance(exc, (ChannelUnavailable, RateLimited, httpx.TransportError)):
+        return True
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500
+
+
 @dataclass
 class MediaItem:
     post_id: int
@@ -231,6 +248,7 @@ class ChannelImporter:
                 cid,
                 1 if history_left else self.s.channel_poll_minutes,
             )
+            await self.redis.delete(self._streak_key(cid))
             log.info(
                 "channel @%s: +%d, %d duplicates, %d skipped, %d filtered%s",
                 ch["username"],
@@ -245,8 +263,11 @@ class ChannelImporter:
             await self.pool.execute("UPDATE channels SET status='pending', next_poll_at=now() WHERE id=$1", cid)
             raise
         except Exception as exc:
-            log.warning("channel @%s failed: %s", ch["username"], exc)
             await self._progress(cid, c, 0)
+            if is_network_error(exc):
+                await self._retry_later(ch, exc)
+                return
+            log.warning("channel @%s failed: %s", ch["username"], exc)
             await self.pool.execute(
                 """UPDATE channels SET status='failed', error=$2, last_polled_at=now(),
                 next_poll_at=now() + make_interval(mins => $3) WHERE id=$1""",
@@ -254,6 +275,26 @@ class ChannelImporter:
                 (str(exc) or type(exc).__name__)[:2000],
                 self.s.channel_poll_minutes,
             )
+
+    def _streak_key(self, cid: int) -> str:
+        return f"ms:ch:fails:{cid}"
+
+    async def _retry_later(self, ch: dict, exc: Exception) -> None:
+        cid = ch["id"]
+        key = self._streak_key(cid)
+        streak = int(await self.redis.incr(key))
+        await self.redis.expire(key, 86400)
+        minutes = min(2 ** (streak - 1), self.s.channel_poll_minutes)
+        status = "failed" if streak >= NETWORK_FAILURES_BEFORE_FAILED else "pending"
+        error = f"{exc}; retry {streak} in {minutes} min"
+        log.warning("channel @%s: %s", ch["username"], error)
+        await self.pool.execute(
+            """UPDATE channels SET status=$2, error=$3, next_poll_at=now() + make_interval(mins => $4) WHERE id=$1""",
+            cid,
+            status,
+            error[:2000],
+            minutes,
+        )
 
     async def _handle_post(self, client: httpx.AsyncClient, ch: dict, post: Post, c: Counters) -> bool:
         reason = self.filter.check(post.text, post.links, post.buttons, ch["username"]) if post.media else ""
@@ -322,10 +363,8 @@ class ChannelImporter:
             try:
                 r = await client.get(url, params=params)
             except httpx.TransportError as exc:
-                if attempt == 2:
-                    raise ChannelUnavailable(
-                        f"cannot reach {self.base} ({type(exc).__name__}); set TELEGRAM_WEB_PROXY in .env and recreate the worker"
-                    ) from exc
+                if attempt == 3:
+                    raise ChannelUnavailable(self._unreachable(exc)) from exc
                 await asyncio.sleep(5 * (attempt + 1))
                 continue
             if r.status_code == 429:
@@ -333,7 +372,13 @@ class ChannelImporter:
                 continue
             r.raise_for_status()
             return r.text
-        raise RuntimeError("t.me keeps rate limiting, try later")
+        raise RateLimited("t.me keeps rate limiting")
+
+    def _unreachable(self, exc: Exception) -> str:
+        name = type(exc).__name__
+        if self.s.web_proxy:
+            return f"{self.base} did not answer through the proxy ({name})"
+        return f"cannot reach {self.base} ({name}); set TELEGRAM_WEB_PROXY in .env and recreate the worker"
 
     async def _collect(self, client: httpx.AsyncClient, ch: dict) -> list[Post]:
         username = ch["username"]
@@ -351,7 +396,7 @@ class ChannelImporter:
             page = parse_page(html, username)
             if first:
                 if not page.posts and not has_preview(html):
-                    raise ChannelUnavailable("channel is private, does not exist or has web preview disabled")
+                    raise ChannelMissing("channel is private, does not exist or has web preview disabled")
                 if page.title and page.title != ch["title"]:
                     await self.pool.execute("UPDATE channels SET title=$2 WHERE id=$1", ch["id"], page.title[:300])
                 first = False
