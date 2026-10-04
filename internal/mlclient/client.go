@@ -134,6 +134,23 @@ func (c *Client) CodexUploadAuth(ctx context.Context, id int64, data []byte) (js
 	return out, err
 }
 
+func (c *Client) EmbedImage(ctx context.Context, data []byte) ([]float32, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/embed/image", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	var out struct {
+		Clip []float32 `json:"clip"`
+	}
+	if err := c.send(req, &out); err != nil {
+		return nil, err
+	}
+	return out.Clip, nil
+}
+
 func (c *Client) Health(ctx context.Context) (json.RawMessage, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()

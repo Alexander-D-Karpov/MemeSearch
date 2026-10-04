@@ -111,6 +111,12 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; word-
 .search { flex: 1; display: flex; gap: 8px; max-width: 720px; }
 .search input { flex: 1; min-width: 0; height: 42px; font-size: 1rem; padding: 0 14px; }
 .search select { height: 42px; }
+.img-search-btn { height: 42px; width: 46px; padding: 0; display: grid; place-items: center; flex: none; }
+.img-search-btn svg { width: 22px; height: 22px; }
+.visual-query { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.visual-query img { width: 44px; height: 44px; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--line); }
+.drop-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 85%, transparent); border: 3px dashed var(--accent); color: var(--text); font-size: 1.3rem; font-weight: 700; pointer-events: none; }
+.drop-overlay[hidden] { display: none; }
 .top-nav { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .top-nav form { margin: 0; }
 .tabs {
@@ -291,6 +297,7 @@ label.check { flex-direction: row !important; align-items: center; gap: 8px; fon
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; font-size: 0.9rem; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
+.song { margin: 0 0 8px; font-weight: 600; }
 .sources { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 0.9rem; }
 .sources a { overflow-wrap: anywhere; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -399,7 +406,7 @@ tr:last-child td { border-bottom: 0; }
 
 /* admin memes */
 .filters { display: flex; flex-wrap: wrap; gap: 6px; }
-.notice { align-items: center; justify-content: space-between; padding: 12px 14px; margin-bottom: 12px; border: 1px solid var(--warn, var(--border)); border-radius: var(--radius); }
+.notice { align-items: center; justify-content: space-between; padding: 12px 14px; margin-bottom: 12px; border: 1px solid var(--warn); border-radius: var(--radius); }
 .bulkbar {
   position: sticky;
   top: 112px;

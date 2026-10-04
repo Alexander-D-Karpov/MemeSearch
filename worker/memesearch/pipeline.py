@@ -21,6 +21,8 @@ from .media import Prepared, extract_audio, prepare
 from .postfilter import analysis_verdict
 from .prompt import build_prompt, embedding_text
 from .rqueue import JobQueue
+from .song import SongRecognizer
+from .sounds import has_music, labels
 from .storage import rel_thumb, safe_join
 from .transcribe import Transcriber
 
@@ -75,6 +77,15 @@ class MLClient:
         vec = np.asarray(data["text"], dtype=np.float32) if data.get("text") else None
         return clip, vec
 
+    async def audio_tags(self, wav: Path) -> list[dict]:
+        try:
+            resp = await self.http.post("/audio/tags", json={"path": str(wav)})
+            resp.raise_for_status()
+            return list(resp.json().get("tags") or [])
+        except httpx.HTTPError as exc:
+            log.warning("audio tagging unavailable: %s", exc)
+            return []
+
 
 class Pipeline:
     def __init__(
@@ -96,6 +107,7 @@ class Pipeline:
         self.fallback = fallback
         self.transcriber = transcriber
         self.ml = ml
+        self.song = SongRecognizer(settings.song_proxy) if settings.song_recognition else None
         self.app_settings = SettingsCache(pool)
 
     async def handle(self, job: dict[str, Any]) -> None:
@@ -183,11 +195,17 @@ class Pipeline:
         )
         fields: dict[str, Any] = {}
         provider, model = meme["provider"], meme["model"]
+        app = await self.app_settings.get()
+        transcript = meme["transcript"]
+        audio: dict[str, Any] = {}
+        if meme["kind"] == "video" and prep.has_audio and (full or not meme["sounds"]):
+            wav = workdir / "audio.wav"
+            seconds = max(self.s.max_transcribe_seconds, self.s.audio_tag_seconds)
+            if await asyncio.to_thread(extract_audio, src, wav, seconds):
+                if full and app.transcribe and self.transcriber:
+                    transcript = await self._transcribe(wav) or ""
+                audio = await self._listen(wav)
         if full:
-            app = await self.app_settings.get()
-            transcript = meme["transcript"]
-            if meme["kind"] == "video" and prep.has_audio and app.transcribe and self.transcriber:
-                transcript = await self._transcribe(src, workdir) or ""
             prompt = build_prompt(
                 kind=meme["kind"],
                 frame_count=len(prep.frames),
@@ -197,11 +215,28 @@ class Pipeline:
                 caption=meme["caption"],
                 filename=meme["original_name"],
                 extra=app.prompt_extra,
+                sounds=audio.get("sounds", meme["sounds"]),
+                song=audio.get("song", meme["song"]),
             )
             fields, provider, model = await self._analyze(prompt, prep.frames, workdir, app)
             fields["transcript"] = transcript
         merged = {
-            **{k: meme[k] for k in ("title", "ocr_text", "description", "template", "people", "objects", "tags", "transcript")},
+            **{
+                k: meme[k]
+                for k in (
+                    "title",
+                    "ocr_text",
+                    "description",
+                    "template",
+                    "people",
+                    "objects",
+                    "tags",
+                    "transcript",
+                    "sounds",
+                    "song",
+                )
+            },
+            **audio,
             **fields,
         }
         try:
@@ -211,24 +246,27 @@ class Pipeline:
                 await self._save_fields(meme_id, fields, provider, model)
                 raise EmbedPending(f"analysis saved, embedding failed: {exc}") from exc
             raise
-        await self._save(meme_id, prep, thumb_rel, fields, provider, model, clip, text_vec)
+        await self._save(meme_id, prep, thumb_rel, fields, provider, model, clip, text_vec, audio)
         if verdict := analysis_verdict(fields):
             await self._hide_channel_meme(meme_id, verdict)
         await self.queue.bump()
         await self.queue.event({"type": "meme", "id": meme_id, "status": "done", "title": merged.get("title", "")})
         log.info("meme %s done via %s", meme_id, provider if full else "embed-only")
 
-    async def _transcribe(self, src: Path, workdir: Path) -> str | None:
-        wav = workdir / "audio.wav"
-        ok = await asyncio.to_thread(extract_audio, src, wav, self.s.max_transcribe_seconds)
-        if not ok:
-            return None
+    async def _transcribe(self, wav: Path) -> str | None:
         try:
             text, _ = await asyncio.to_thread(self.transcriber.transcribe, wav)
             return text
         except Exception as exc:
             log.warning("transcription failed: %s", exc)
             return None
+
+    async def _listen(self, wav: Path) -> dict[str, Any]:
+        tags = await self.ml.audio_tags(wav)
+        song = ""
+        if self.song and (has_music(tags) or not tags):
+            song = await self.song.recognize(wav)
+        return {"sounds": labels(tags), "song": song}
 
     async def _analyze(self, prompt: str, frames: list[Path], workdir: Path, app) -> tuple[dict[str, Any], str, str]:
         reasons: list[str] = []
@@ -278,6 +316,7 @@ class Pipeline:
         model: str,
         clip: np.ndarray | None,
         text_vec: np.ndarray | None,
+        audio: dict[str, Any] | None = None,
     ) -> None:
         sets = [
             "status='done'",
@@ -306,6 +345,10 @@ class Pipeline:
             model or "",
             prep.phash,
         ]
+        for col in ("sounds", "song"):
+            if audio and col in audio:
+                args.append(audio[col])
+                sets.append(f"{col}=${len(args)}")
         sets += self._text_sets(fields, args)
         await self.pool.execute(f"UPDATE memes SET {', '.join(sets)} WHERE id=$1", *args)
 

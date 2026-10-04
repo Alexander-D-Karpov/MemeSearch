@@ -317,3 +317,26 @@ func (s *Service) LookAlike(ctx context.Context, id int64, limit int) ([]*store.
 	}
 	return s.store.MemesByIDs(ctx, ids)
 }
+
+func (s *Service) ByImage(ctx context.Context, clip []float32, kind string, exclude int64, limit, offset int) ([]*store.Meme, error) {
+	q := `SELECT id FROM memes WHERE clip_vec IS NOT NULL AND status = 'done' AND NOT hidden
+		AND id <> $1 AND ($2 = '' OR kind = $2)
+		ORDER BY clip_vec <=> $3 LIMIT $4 OFFSET $5`
+	rows, err := s.store.Pool.Query(ctx, q, exclude, kind, pgvector.NewVector(clip), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return nil, err
+	}
+	return s.store.MemesByIDs(ctx, ids)
+}
+
+func (s *Service) MemeVector(ctx context.Context, id int64) ([]float32, error) {
+	clip, _, err := s.store.Vectors(ctx, id)
+	if err != nil || clip == nil {
+		return nil, err
+	}
+	return clip.Slice(), nil
+}

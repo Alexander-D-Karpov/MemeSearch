@@ -96,6 +96,9 @@ Usage bars refresh after every analysis and every `CODEX_USAGE_REFRESH_MINUTES` 
 
 ## Search tuning
 
+- **Search by picture:** the camera button next to the search box, Ctrl+V of an image, or dropping an image on the page finds memes that look like it (SigLIP image vectors). Meme pages have **Find similar pictures** (`/?like=ID`). The API is `POST /api/v1/search/image` with the image as `image` form field or raw body; 20 searches per minute per IP.
+- **Sound:** for videos the ml service tags the audio with an AudioSet classifier (`AUDIO_TAG_MODEL`, e.g. music, laughter, screaming, explosion, techno, guitar; stored as `english / русский`) and the worker recognizes songs via Shazam when music is heard (`SONG_RECOGNITION`, `SONG_PROXY`). Both are shown on the meme page, given to Codex so descriptions and tags cover the audio, and indexed for text search (the song as strongly as the title). Existing videos get them with **Recompute all vectors** on the dashboard, which does not use Codex.
+
 - **Similar memes** on a meme page mixes topic (rare shared tags, template, people, meaning) and look: pictures within `LOOKALIKE_MAX_DIST` of it rank high, near copies of the same template highest. `/api/v1/memes/{id}/similar?mode=looks` returns the picture-only list.
 
 - `SEARCH_TEXT_MAX_DIST` / `SEARCH_CLIP_MAX_DIST` (cosine distance, default `2` = off) drop vector-only matches that are too far, so nonsense queries return nothing. Start with `0.25` / `0.95` and adjust by looking at results.

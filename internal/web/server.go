@@ -65,6 +65,8 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /{$}", s.pageIndex)
 	mux.HandleFunc("GET /search", s.pageIndex)
+	mux.HandleFunc("POST /search/image", s.doImageSearch)
+	mux.HandleFunc("POST /api/v1/search/image", s.doImageSearch)
 	mux.HandleFunc("GET /partials/results", s.partialResults)
 	mux.HandleFunc("GET /m/{id}", s.pageMeme)
 	mux.HandleFunc("GET /m/{id}/og.jpg", s.memeOGImage)

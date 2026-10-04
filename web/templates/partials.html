@@ -22,6 +22,6 @@
 
 {{define "results"}}
 {{range .Memes}}{{template "card" .}}{{end}}
-{{if .NextOffset}}<div class="more" data-next="/partials/results?q={{q .Query}}&kind={{.Kind}}&offset={{.NextOffset}}"></div>{{end}}
+{{if .NextOffset}}<div class="more" data-next="/partials/results?q={{q .Query}}&kind={{.Kind}}&offset={{.NextOffset}}{{with .ImgToken}}&img={{.}}{{end}}{{with .Like}}&like={{.ID}}{{end}}"></div>{{end}}
 {{if .NextBefore}}<div class="more" data-next="/partials/results?kind={{.Kind}}&before={{.NextBefore}}"></div>{{end}}
 {{end}}

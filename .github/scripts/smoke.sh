@@ -75,4 +75,9 @@ psql "$DATABASE_URL" -qc "UPDATE memes SET tg_cache_error='boom', tg_cache_attem
 
 curl -fsS "$BASE/api/v1/memes/$ID/similar?mode=looks" | grep -q '"memes"' || fail "look-alike api"
 
+out=$(curl -s -H "Accept: application/json" -F "image=@$0" "$BASE/api/v1/search/image")
+echo "$out" | grep -q "not a picture" || fail "image search accepted a non-image: $out"
+curl -fsS "$BASE/?img=00000000000000000000000000000000" | grep -q "expired" || fail "expired picture search"
+curl -fsS "$BASE/m/$ID" | grep -q "?like=$ID" || fail "find similar pictures link"
+
 echo "smoke test passed"

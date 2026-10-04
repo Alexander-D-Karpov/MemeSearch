@@ -133,4 +133,48 @@
       prompt('Copy link', value);
     }
   });
+
+  const imgForm = $('#img-search');
+  const imgFile = $('#img-search-file');
+  if (imgForm && imgFile) {
+    const send = (file) => {
+      if (!file || !file.type.startsWith('image/')) { window.toast('That is not a picture'); return; }
+      if (file.size > 20 * 1024 * 1024) { window.toast('The picture is larger than 20 MB'); return; }
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      imgFile.files = dt.files;
+      window.toast('Searching by picture…', 10000);
+      imgForm.submit();
+    };
+    $('#img-search-btn')?.addEventListener('click', () => imgFile.click());
+    imgFile.addEventListener('change', () => { if (imgFile.files[0]) send(imgFile.files[0]); });
+    document.addEventListener('paste', (e) => {
+      if (document.body.classList.contains('is-admin') && location.pathname.startsWith('/admin')) return;
+      const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
+      if (!item) return;
+      e.preventDefault();
+      send(item.getAsFile());
+    });
+    const overlay = $('#drop-overlay');
+    let depth = 0;
+    const hasFile = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+    const dropAllowed = () => !location.pathname.startsWith('/admin');
+    document.addEventListener('dragenter', (e) => {
+      if (!hasFile(e) || !dropAllowed()) return;
+      depth += 1;
+      overlay.hidden = false;
+    });
+    document.addEventListener('dragleave', () => {
+      depth = Math.max(0, depth - 1);
+      if (!depth) overlay.hidden = true;
+    });
+    document.addEventListener('dragover', (e) => { if (hasFile(e) && dropAllowed()) e.preventDefault(); });
+    document.addEventListener('drop', (e) => {
+      if (!hasFile(e) || !dropAllowed()) return;
+      e.preventDefault();
+      depth = 0;
+      overlay.hidden = true;
+      send(e.dataTransfer.files[0]);
+    });
+  }
 })();
