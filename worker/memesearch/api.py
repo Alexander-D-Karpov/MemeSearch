@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from .codex import CodexRuntime, cooldown_from_usage, pause_reason, usage_pause_until
 from .config import get_settings
 from .db import connect
-from .embeddings import Embedder
+from .embeddings import AudioTagger, Embedder
 
 log = logging.getLogger("memesearch.api")
 settings = get_settings()
@@ -42,6 +42,7 @@ class State:
     runtime: CodexRuntime
     embedder: Embedder | None = None
     embed_error: str = ""
+    tagger: AudioTagger | None = None
     logins: dict[int, LoginState]
 
 
@@ -66,6 +67,8 @@ async def lifespan(app: FastAPI):
     state.pool = await connect(settings.database_url, max_size=5)
     state.runtime = CodexRuntime(settings)
     state.logins = {}
+    if settings.audio_tag_model:
+        state.tagger = AudioTagger(settings.audio_tag_model, settings.embed_threads, settings.audio_tag_seconds)
     loader = asyncio.create_task(load_embedder())
     yield
     loader.cancel()
@@ -125,6 +128,39 @@ async def embed_meme(body: MemeIn) -> dict[str, list[float] | None]:
     clip = await run_in_threadpool(emb.clip_images, paths) if paths else None
     text = await run_in_threadpool(emb.text_passage, body.text) if body.text.strip() else None
     return {"clip": clip.tolist() if clip is not None else None, "text": text.tolist() if text is not None else None}
+
+
+MAX_IMAGE_BYTES = 20 << 20
+
+
+@app.post("/embed/image", dependencies=[Depends(require_token)])
+async def embed_image(request: Request) -> dict[str, list[float]]:
+    emb = need_embedder()
+    data = await request.body()
+    if not data or len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413 if data else 400, detail="send an image up to 20 MB as the request body")
+    try:
+        clip = await run_in_threadpool(emb.clip_image_bytes, data)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=415, detail=f"not a readable image: {exc}") from exc
+    return {"clip": clip.tolist()}
+
+
+class AudioIn(BaseModel):
+    path: str
+
+
+@app.post("/audio/tags", dependencies=[Depends(require_token)])
+async def audio_tags(body: AudioIn) -> dict[str, Any]:
+    if state.tagger is None:
+        return {"tags": [], "enabled": False}
+    path = _allowed(body.path)
+    try:
+        tags = await run_in_threadpool(state.tagger.tag, path)
+    except Exception as exc:
+        log.warning("audio tagging failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"audio tagging failed: {exc}") from exc
+    return {"tags": tags, "enabled": True}
 
 
 class SessionIn(BaseModel):

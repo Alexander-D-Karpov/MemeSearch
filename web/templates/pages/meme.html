@@ -15,6 +15,7 @@
       <a class="btn btn-primary" href="{{$m.URL}}" download>Download</a>
       <button class="btn" type="button" data-copy="{{$m.URL}}">Copy media link</button>
       <button class="btn" type="button" data-copy-page>Copy page link</button>
+      <a class="btn" href="/?like={{$m.ID}}">Find similar pictures</a>
     </div>
 
     {{if $m.OCRText}}
@@ -33,6 +34,13 @@
     <section>
       <span class="label">Speech</span>
       <p class="transcript">{{$m.Transcript}}</p>
+    </section>
+    {{end}}
+    {{if or $m.Song $m.Sounds}}
+    <section>
+      <span class="label">Sound</span>
+      {{with $m.Song}}<p class="song">♪ <a href="/?q={{q .}}">{{.}}</a></p>{{end}}
+      {{with $m.Sounds}}<div class="chips">{{range .}}<a class="chip" href="/?q={{q .}}">{{.}}</a>{{end}}</div>{{end}}
     </section>
     {{end}}
     {{if $m.People}}

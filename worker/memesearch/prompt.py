@@ -78,6 +78,8 @@ def build_prompt(
     caption: str,
     filename: str,
     extra: str,
+    sounds: list[str] | None = None,
+    song: str = "",
 ) -> str:
     parts = []
     if kind == "image":
@@ -92,6 +94,21 @@ def build_prompt(
         )
     if transcript:
         parts.append(f"Automatic speech transcript of the audio (may contain recognition errors):\n<<<\n{transcript[:4000]}\n>>>")
+    if sounds:
+        parts.append(
+            "Sounds an audio classifier detected in the clip, strongest first (machine guesses, may be wrong): "
+            + "; ".join(sounds[:10])
+        )
+    if song:
+        parts.append(
+            f"Song recognized in the audio: {song[:200]}. Mention it in the description and add the artist, "
+            "the song title and the genre to tags."
+        )
+    if sounds or song:
+        parts.append(
+            "Describe what is heard as well as what is seen: music style and mood, notable sounds, "
+            "and how the audio makes the joke work. Add sound-related keywords to tags."
+        )
     if caption:
         parts.append(f"Caption the uploader attached (context, may be unrelated):\n<<<\n{caption[:1500]}\n>>>")
     if filename and not re.fullmatch(r"[\w\-. ]*\d{4,}[\w\-. ]*", filename):
@@ -165,5 +182,7 @@ def embedding_text(m: dict[str, Any]) -> str:
         ", ".join(m.get("objects") or []),
         ", ".join(m.get("tags") or []),
         (m.get("transcript") or "")[:1000],
+        m.get("song", ""),
+        ", ".join(m.get("sounds") or []),
     ]
     return "\n".join(p for p in parts if p)

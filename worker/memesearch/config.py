@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     whisper_threads: int = 4
     max_transcribe_seconds: int = 600
 
+    audio_tag_model: str | None = "MIT/ast-finetuned-audioset-10-10-0.4593"
+    audio_tag_seconds: int = 120
+    song_recognition: bool = True
+    song_proxy: str | None = None
+
     max_video_frames: int = 5
     max_gif_frames: int = 4
     analysis_max_side: int = 1280
@@ -102,6 +107,8 @@ class Settings(BaseSettings):
         "codex_all_proxy",
         "fallback_api_key",
         "whisper_model",
+        "audio_tag_model",
+        "song_proxy",
         "telegram_bot_token",
         "telegram_api_url",
         "telegram_proxy",

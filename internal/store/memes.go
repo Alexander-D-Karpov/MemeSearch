@@ -47,6 +47,8 @@ type Meme struct {
 	NSFW         bool       `json:"nsfw"`
 	Hidden       bool       `json:"hidden"`
 	HiddenReason string     `json:"hidden_reason,omitempty"`
+	Sounds       []string   `json:"sounds"`
+	Song         string     `json:"song,omitempty"`
 	Locked       bool       `json:"locked"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
@@ -57,7 +59,7 @@ type Meme struct {
 const memeCols = `id, sha256, kind, mime, ext, file_path, thumb_path, size_bytes, width, height,
 	duration_ms, original_name, source, source_ref, caption, status, error, attempts, provider, model,
 	title, description, ocr_text, transcript, objects, tags, people, template, lang, mood, nsfw, hidden,
-	locked, created_at, updated_at, processed_at, hidden_reason`
+	locked, created_at, updated_at, processed_at, hidden_reason, sounds, song`
 
 func scanMeme(row pgx.Row) (*Meme, error) {
 	m := &Meme{}
@@ -65,7 +67,7 @@ func scanMeme(row pgx.Row) (*Meme, error) {
 		&m.Width, &m.Height, &m.DurationMs, &m.OriginalName, &m.Source, &m.SourceRef, &m.Caption, &m.Status,
 		&m.Error, &m.Attempts, &m.Provider, &m.Model, &m.Title, &m.Description, &m.OCRText, &m.Transcript,
 		&m.Objects, &m.Tags, &m.People, &m.Template, &m.Lang, &m.Mood, &m.NSFW, &m.Hidden, &m.Locked,
-		&m.CreatedAt, &m.UpdatedAt, &m.ProcessedAt, &m.HiddenReason)
+		&m.CreatedAt, &m.UpdatedAt, &m.ProcessedAt, &m.HiddenReason, &m.Sounds, &m.Song)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

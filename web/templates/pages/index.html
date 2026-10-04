@@ -1,7 +1,15 @@
 {{define "content"}}
 {{with .Data}}
 <div class="meta-line" id="meta">
-  {{if .Query}}
+  {{if .Error}}
+    <span class="error">{{.Error}}</span>
+  {{else if .Visual}}
+    <span class="visual-query">
+      {{if .Like}}<a href="/m/{{.Like.ID}}"><img src="{{.Like.ThumbURL}}" alt=""></a> Memes that look like <a href="/m/{{.Like.ID}}">{{if .Like.Title}}{{.Like.Title}}{{else}}meme #{{.Like.ID}}{{end}}</a>
+      {{else}}{{with .Preview}}<img src="{{.}}" alt="Your picture">{{end}} Memes that look like your picture{{end}}
+      · most similar first · {{.TookMs}} ms
+    </span>
+  {{else if .Query}}
     {{.Total}} result{{if ne .Total 1}}s{{end}} for “{{.Query}}” · {{.TookMs}} ms{{if not .Semantic}} · text only{{end}}
   {{else}}
     Latest memes
@@ -10,6 +18,9 @@
 <div class="grid" id="results">
   {{template "results" .}}
 </div>
+{{if and .Visual (not .Memes) (not .Error)}}
+<p class="empty">Nothing looks like this picture yet.</p>
+{{end}}
 {{if and .Query (not .Memes)}}
 <p class="empty">Nothing found. Try other words, another language, or describe what is in the picture.</p>
 {{end}}

@@ -34,6 +34,7 @@
 <link rel="stylesheet" href="{{static "css/app.css"}}">
 </head>
 <body{{if .Admin}} class="is-admin"{{end}}>
+<div class="drop-overlay" id="drop-overlay" hidden>Drop a picture to find memes that look like it</div>
 <header class="top">
   <div class="top-inner">
     <a class="brand" href="/" aria-label="Meme Search home">
@@ -48,6 +49,13 @@
         <option value="gif"{{if eq .Kind "gif"}} selected{{end}}>GIFs</option>
         <option value="video"{{if eq .Kind "video"}} selected{{end}}>Videos</option>
       </select>
+      <button class="btn img-search-btn" type="button" id="img-search-btn" title="Search by picture: choose, paste (Ctrl+V) or drop an image" aria-label="Search by picture">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3l2-2.5h6L17 7h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12.5" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+    </form>
+    <form id="img-search" action="/search/image" method="post" enctype="multipart/form-data" hidden>
+      <input type="file" name="image" accept="image/*" id="img-search-file">
+      <input type="hidden" name="kind" value="{{.Kind}}">
     </form>
     {{if .Admin}}
     <nav class="top-nav">

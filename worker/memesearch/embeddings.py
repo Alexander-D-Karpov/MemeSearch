@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 import threading
 from pathlib import Path
@@ -8,7 +9,9 @@ import numpy as np
 import torch
 from PIL import Image
 from sentence_transformers import SentenceTransformer
-from transformers import AutoModel, AutoProcessor
+from transformers import AutoModel, AutoProcessor, pipeline
+
+from .sounds import SAMPLE_RATE, aggregate, read_wav, windows
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +64,18 @@ class Embedder:
         return _normalize(mean[None, :])[0].astype(np.float32)
 
     @torch.inference_mode()
+    def clip_image_bytes(self, data: bytes) -> np.ndarray:
+        with Image.open(io.BytesIO(data)) as im:
+            im.seek(0)
+            im.draft("RGB", (1024, 1024))
+            image = im.convert("RGB")
+        image.thumbnail((1024, 1024))
+        with self.lock:
+            inputs = self.processor(images=[image], return_tensors="pt")
+            feats = _features(self.clip.get_image_features(**inputs)).float().numpy()
+        return _normalize(feats)[0].astype(np.float32)
+
+    @torch.inference_mode()
     def clip_text(self, text: str) -> np.ndarray:
         with self.lock:
             inputs = self.processor(
@@ -78,3 +93,30 @@ class Embedder:
         with self.lock:
             v = self.text.encode([f"passage: {text}"], normalize_embeddings=True)
         return np.asarray(v[0], dtype=np.float32)
+
+
+class AudioTagger:
+    def __init__(self, model: str, threads: int, max_seconds: int) -> None:
+        self.model_name = model
+        self.threads = threads
+        self.max_seconds = max_seconds
+        self._pipe = None
+        self._lock = threading.Lock()
+
+    def _load(self):
+        if self._pipe is None:
+            log.info("loading %s", self.model_name)
+            torch.set_num_threads(max(1, self.threads))
+            self._pipe = pipeline("audio-classification", model=self.model_name, device="cpu")
+        return self._pipe
+
+    @torch.inference_mode()
+    def tag(self, wav: Path) -> list[dict]:
+        audio = read_wav(wav, self.max_seconds)
+        chunks = windows(audio)
+        if not chunks:
+            return []
+        with self._lock:
+            pipe = self._load()
+            preds = [pipe({"raw": c, "sampling_rate": SAMPLE_RATE}, top_k=15) for c in chunks]
+        return aggregate(preds)

@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -21,6 +22,11 @@ type Results struct {
 	NextBefore int64
 	TookMs     int64
 	Semantic   bool
+	Visual     bool
+	ImgToken   string
+	Preview    template.URL
+	Like       *store.Meme
+	Error      string
 }
 
 func (s *Server) results(r *http.Request) (*Results, error) {
@@ -28,6 +34,12 @@ func (s *Server) results(r *http.Request) (*Results, error) {
 	kind := validKind(r.URL.Query().Get("kind"))
 	limit := s.cfg.PageSize
 	res := &Results{Query: q, Kind: kind}
+	if r.URL.Query().Get("img") != "" || r.URL.Query().Get("like") != "" {
+		if err := s.visualResults(r, res); err != nil {
+			res.Error = err.Error()
+		}
+		return res, nil
+	}
 	if q == "" {
 		before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
 		memes, err := s.store.ListMemes(r.Context(), store.ListFilter{Public: true, Kind: kind, BeforeID: before, Limit: limit})
@@ -65,7 +77,12 @@ func (s *Server) pageIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	title := "Meme Search"
-	if res.Query != "" {
+	switch {
+	case res.Visual && res.Like != nil:
+		title = "Looks like " + firstNonEmpty(res.Like.Title, "meme #"+strconv.FormatInt(res.Like.ID, 10)) + " — Meme Search"
+	case res.Visual:
+		title = "Search by picture — Meme Search"
+	case res.Query != "":
 		title = res.Query + " — Meme Search"
 	}
 	var og OpenGraph
