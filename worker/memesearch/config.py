@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     clip_dim: int = 768
     text_dim: int = 384
     embed_threads: int = 4
+    ml_background_concurrency: int = 1
 
     whisper_model: str | None = "small"
     whisper_compute_type: str = "int8"

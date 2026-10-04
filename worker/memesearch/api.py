@@ -43,6 +43,7 @@ class State:
     embedder: Embedder | None = None
     embed_error: str = ""
     tagger: AudioTagger | None = None
+    background: asyncio.Semaphore
     logins: dict[int, LoginState]
 
 
@@ -67,6 +68,7 @@ async def lifespan(app: FastAPI):
     state.pool = await connect(settings.database_url, max_size=5)
     state.runtime = CodexRuntime(settings)
     state.logins = {}
+    state.background = asyncio.Semaphore(max(1, settings.ml_background_concurrency))
     if settings.audio_tag_model:
         state.tagger = AudioTagger(settings.audio_tag_model, settings.embed_threads, settings.audio_tag_seconds)
     loader = asyncio.create_task(load_embedder())
@@ -125,8 +127,9 @@ async def embed_query(body: QueryIn) -> dict[str, list[float]]:
 async def embed_meme(body: MemeIn) -> dict[str, list[float] | None]:
     emb = need_embedder()
     paths = [_allowed(p) for p in body.image_paths]
-    clip = await run_in_threadpool(emb.clip_images, paths) if paths else None
-    text = await run_in_threadpool(emb.text_passage, body.text) if body.text.strip() else None
+    async with state.background:
+        clip = await run_in_threadpool(emb.clip_images, paths) if paths else None
+        text = await run_in_threadpool(emb.text_passage, body.text) if body.text.strip() else None
     return {"clip": clip.tolist() if clip is not None else None, "text": text.tolist() if text is not None else None}
 
 
@@ -156,7 +159,8 @@ async def audio_tags(body: AudioIn) -> dict[str, Any]:
         return {"tags": [], "enabled": False}
     path = _allowed(body.path)
     try:
-        tags = await run_in_threadpool(state.tagger.tag, path)
+        async with state.background:
+            tags = await run_in_threadpool(state.tagger.tag, path)
     except Exception as exc:
         log.warning("audio tagging failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"audio tagging failed: {exc}") from exc

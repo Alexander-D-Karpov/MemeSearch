@@ -72,6 +72,7 @@ services:
     <<: *python
     command: ["uvicorn", "memesearch.api:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--no-access-log"]
     mem_limit: ${ML_MEM_LIMIT:-6g}
+    cpu_shares: ${ML_CPU_SHARES:-512}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
       interval: 30s
@@ -84,6 +85,7 @@ services:
     command: ["python", "-m", "memesearch.worker"]
     stop_grace_period: 45s
     mem_limit: ${WORKER_MEM_LIMIT:-6g}
+    cpu_shares: ${WORKER_CPU_SHARES:-256}
     pids_limit: 4096
 
   bot:
