@@ -7,7 +7,15 @@ import httpx
 import pytest
 from PIL import Image, ImageDraw
 
-from memesearch.channels import ChannelImporter, has_preview, parse_duration, parse_page
+from memesearch.channels import (
+    ChannelImporter,
+    ChannelMissing,
+    ChannelUnavailable,
+    has_preview,
+    is_network_error,
+    parse_duration,
+    parse_page,
+)
 from memesearch.config import Settings
 from memesearch.media import content_hash, dhash, hamming, poster_time, thumb_hash, video_times
 from memesearch.storage import Storage
@@ -163,3 +171,64 @@ def test_parse_links_and_buttons():
     </div>"""
     post = parse_page(html, "memes").posts[0]
     assert post.links == ["https://t.me/+Invite"] and post.buttons == 1
+
+
+class FakeRedis:
+    def __init__(self):
+        self.data = {}
+
+    async def incr(self, key):
+        self.data[key] = self.data.get(key, 0) + 1
+        return self.data[key]
+
+    async def expire(self, key, ttl):
+        pass
+
+    async def delete(self, key):
+        self.data.pop(key, None)
+
+
+class ChannelPool:
+    def __init__(self):
+        self.updates = []
+
+    async def execute(self, sql, *args):
+        if "status=$2" in sql:
+            self.updates.append(args[1:])
+
+
+class Unreachable:
+    async def __aenter__(self):
+        raise ChannelUnavailable("https://t.me did not answer through the proxy (ReadTimeout)")
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def test_network_errors_retry_soon_before_failing():
+    imp = ChannelImporter.__new__(ChannelImporter)
+    imp.s = Settings(channel_poll_minutes=30)
+    imp.pool, imp.redis = ChannelPool(), FakeRedis()
+    imp._client = Unreachable
+    imp._progress = lambda *a: asyncio.sleep(0)
+    ch = {"id": 1, "username": "jemalloc"}
+    for _ in range(7):
+        asyncio.run(imp._poll(ch))
+    statuses = [(status, minutes) for status, _, minutes in imp.pool.updates]
+    assert statuses == [
+        ("pending", 1),
+        ("pending", 2),
+        ("pending", 4),
+        ("pending", 8),
+        ("pending", 16),
+        ("failed", 30),
+        ("failed", 30),
+    ]
+    assert imp.pool.updates[0][1] == "https://t.me did not answer through the proxy (ReadTimeout); retry 1 in 1 min"
+
+
+def test_missing_channel_is_not_a_network_error():
+    assert is_network_error(ChannelUnavailable("x"))
+    assert is_network_error(httpx.ReadTimeout("x"))
+    assert not is_network_error(ChannelMissing("private"))
+    assert not is_network_error(ValueError("x"))
