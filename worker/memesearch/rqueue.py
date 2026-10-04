@@ -11,6 +11,7 @@ from redis.exceptions import ResponseError
 STREAM_HIGH = "ms:q:high"
 STREAM_LOW = "ms:q:low"
 DELAYED = "ms:q:delayed"
+DELAYED_HIGH = "ms:q:delayed:high"
 WAIT_CODEX = "ms:q:wait:codex"
 INDEX_VERSION = "ms:index:ver"
 EVENTS = "ms:events"
@@ -56,9 +57,9 @@ class JobQueue:
     async def process(self, meme_id: int, stream: str = STREAM_HIGH, analyze: bool = True) -> None:
         await self.push(stream, {"type": "process", "id": meme_id, "analyze": analyze})
 
-    async def delay(self, job: dict[str, Any], seconds: float) -> None:
+    async def delay(self, job: dict[str, Any], seconds: float, high: bool = False) -> None:
         job = {**job, "nonce": time.time_ns()}
-        await self.r.zadd(DELAYED, {json.dumps(job): time.time() + seconds})
+        await self.r.zadd(DELAYED_HIGH if high else DELAYED, {json.dumps(job): time.time() + seconds})
 
     async def wait_codex(self, job: dict[str, Any], seconds: float) -> None:
         job = {**job, "nonce": time.time_ns()}
@@ -66,14 +67,15 @@ class JobQueue:
 
     async def promote_due(self) -> int:
         now = time.time()
-        n = int(await self._promote(keys=[DELAYED, STREAM_LOW], args=[now]))
+        n = int(await self._promote(keys=[DELAYED_HIGH, STREAM_HIGH], args=[now]))
+        n += int(await self._promote(keys=[DELAYED, STREAM_LOW], args=[now]))
         return n + int(await self._promote(keys=[WAIT_CODEX, STREAM_LOW], args=[now]))
 
     async def backlog(self) -> int:
         pipe = self.r.pipeline(transaction=False)
         for key in (STREAM_HIGH, STREAM_LOW):
             pipe.xlen(key)
-        for key in (DELAYED, WAIT_CODEX):
+        for key in (DELAYED, DELAYED_HIGH, WAIT_CODEX):
             pipe.zcard(key)
         return sum(int(n or 0) for n in await pipe.execute())
 
