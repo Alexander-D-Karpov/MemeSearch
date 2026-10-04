@@ -18,13 +18,20 @@ async def _init(conn: asyncpg.Connection) -> None:
     await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
 
 
+SCHEMA_PROBE = "song"
+
+
 async def connect(dsn: str, min_size: int = 1, max_size: int = 10) -> asyncpg.Pool:
     last: Exception | None = None
     for _ in range(60):
         try:
             conn = await asyncpg.connect(dsn)
             try:
-                exists = await conn.fetchval("SELECT to_regclass('public.memes') IS NOT NULL")
+                exists = await conn.fetchval(
+                    """SELECT count(*) = 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'memes' AND column_name = $1""",
+                    SCHEMA_PROBE,
+                )
             finally:
                 await conn.close()
             if exists:

@@ -141,7 +141,7 @@ async def embed_image(request: Request) -> dict[str, list[float]]:
         raise HTTPException(status_code=413 if data else 400, detail="send an image up to 20 MB as the request body")
     try:
         clip = await run_in_threadpool(emb.clip_image_bytes, data)
-    except (OSError, ValueError) as exc:
+    except Exception as exc:
         raise HTTPException(status_code=415, detail=f"not a readable image: {exc}") from exc
     return {"clip": clip.tolist()}
 

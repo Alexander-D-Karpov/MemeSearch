@@ -100,6 +100,8 @@ def test_listen_recognizes_songs_only_when_music_is_heard(tmp_path: Path):
     assert music == {"sounds": ["music / музыка"], "song": "Artist — Title"}
     speech = asyncio.run(listen([{"label": "Laughter", "score": 0.9}]))
     assert speech == {"sounds": ["laughter / смех"], "song": ""} and FakeSong.calls == 1
+    down = asyncio.run(listen(None))
+    assert down == {"song": "Artist — Title"} and FakeSong.calls == 2
 
 
 def test_audio_tags_failure_is_not_fatal(tmp_path: Path):
@@ -108,4 +110,4 @@ def test_audio_tags_failure_is_not_fatal(tmp_path: Path):
         ml.http = httpx.AsyncClient(base_url="http://ml", transport=httpx.MockTransport(lambda r: httpx.Response(502)))
         return await ml.audio_tags(tmp_path / "a.wav")
 
-    assert asyncio.run(run()) == []
+    assert asyncio.run(run()) is None
