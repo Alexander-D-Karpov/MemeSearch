@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -19,13 +20,15 @@ def song_name(result: dict[str, Any] | None) -> str:
 
 
 class SongRecognizer:
-    def __init__(self, proxy: str | None) -> None:
+    def __init__(self, proxy: str | None, timeout: float = 45) -> None:
         self.proxy = proxy
+        self.timeout = timeout
         self.shazam = Shazam(language="ru-RU", endpoint_country="RU")
 
     async def recognize(self, wav: Path) -> str:
         try:
-            return song_name(await self.shazam.recognize(str(wav), proxy=self.proxy))
+            result = await asyncio.wait_for(self.shazam.recognize(str(wav), proxy=self.proxy), self.timeout)
+            return song_name(result)
         except Exception as exc:
             log.info("song recognition failed: %s", exc)
             return ""

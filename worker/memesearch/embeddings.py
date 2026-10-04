@@ -3,17 +3,21 @@ from __future__ import annotations
 import io
 import logging
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
 import torch
 from PIL import Image
+from pillow_heif import register_heif_opener
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModel, AutoProcessor, pipeline
 
 from .sounds import SAMPLE_RATE, aggregate, read_wav, windows
 
 log = logging.getLogger(__name__)
+register_heif_opener()
+RETRY_LOAD_SECONDS = 600
 
 
 def _features(out: object) -> torch.Tensor:
@@ -102,12 +106,19 @@ class AudioTagger:
         self.max_seconds = max_seconds
         self._pipe = None
         self._lock = threading.Lock()
+        self._failed_at = -RETRY_LOAD_SECONDS
+        self._error = ""
 
     def _load(self):
         if self._pipe is None:
+            if time.monotonic() - self._failed_at < RETRY_LOAD_SECONDS:
+                raise RuntimeError(f"audio model unavailable: {self._error}")
             log.info("loading %s", self.model_name)
-            torch.set_num_threads(max(1, self.threads))
-            self._pipe = pipeline("audio-classification", model=self.model_name, device="cpu")
+            try:
+                self._pipe = pipeline("audio-classification", model=self.model_name, device="cpu")
+            except Exception as exc:
+                self._failed_at, self._error = time.monotonic(), str(exc)[:300]
+                raise
         return self._pipe
 
     @torch.inference_mode()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any
 import asyncpg
 import httpx
 import numpy as np
+from PIL import Image
 from redis.asyncio import Redis
 
 from .codex import CodexFailed, CodexPool, CodexTransient, CodexUnavailable, is_transient
@@ -27,6 +29,20 @@ from .storage import rel_thumb, safe_join
 from .transcribe import Transcriber
 
 log = logging.getLogger(__name__)
+
+UNREADABLE = (subprocess.SubprocessError, Image.UnidentifiedImageError, Image.DecompressionBombError, EOFError, SyntaxError)
+
+
+def media_error(exc: BaseException) -> str:
+    if isinstance(exc, subprocess.CalledProcessError):
+        detail = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else str(exc.stderr or "")
+        last = detail.strip().splitlines()[-1] if detail.strip() else ""
+        for arg in (a for a in map(str, exc.cmd[1:]) if "/" in a):
+            last = last.replace(f"{arg}: ", "")
+        return f"{Path(str(exc.cmd[0])).name} exited with {exc.returncode}" + (f": {last[:200]}" if last else "")
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return f"{Path(str(exc.cmd[0])).name} timed out"
+    return str(exc)[:300] or type(exc).__name__
 
 
 class RetryLater(Exception):
@@ -77,14 +93,15 @@ class MLClient:
         vec = np.asarray(data["text"], dtype=np.float32) if data.get("text") else None
         return clip, vec
 
-    async def audio_tags(self, wav: Path) -> list[dict]:
+    async def audio_tags(self, wav: Path) -> list[dict] | None:
         try:
             resp = await self.http.post("/audio/tags", json={"path": str(wav)})
             resp.raise_for_status()
-            return list(resp.json().get("tags") or [])
-        except httpx.HTTPError as exc:
+            tags = resp.json().get("tags") or []
+            return [{"label": str(t["label"]), "score": float(t["score"])} for t in tags]
+        except Exception as exc:
             log.warning("audio tagging unavailable: %s", exc)
-            return []
+            return None
 
 
 class Pipeline:
@@ -171,6 +188,9 @@ class Pipeline:
                 return
             log.warning("meme %s failed: %s", meme_id, exc)
             await self._fail_or_retry(meme_id, job, str(exc), None, full, full)
+        except Exception as exc:
+            log.exception("meme %s: unexpected error", meme_id)
+            await self._fail_or_retry(meme_id, job, f"unexpected error: {type(exc).__name__}: {exc}", None, full, full)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
@@ -181,27 +201,37 @@ class Pipeline:
             await self._mark_failed(meme_id, f"file missing: {meme['file_path']}")
             return
         thumb_rel = rel_thumb(meme["sha256"])
-        prep: Prepared = await asyncio.to_thread(
-            prepare,
-            meme["kind"],
-            src,
-            workdir,
-            safe_join(self.s.upload_dir, thumb_rel),
-            max_video_frames=self.s.max_video_frames,
-            max_gif_frames=self.s.max_gif_frames,
-            analysis_max_side=self.s.analysis_max_side,
-            frame_max_side=self.s.frame_max_side,
-            thumb_size=self.s.thumb_size,
-        )
+        try:
+            prep: Prepared = await asyncio.to_thread(
+                prepare,
+                meme["kind"],
+                src,
+                workdir,
+                safe_join(self.s.upload_dir, thumb_rel),
+                max_video_frames=self.s.max_video_frames,
+                max_gif_frames=self.s.max_gif_frames,
+                analysis_max_side=self.s.analysis_max_side,
+                frame_max_side=self.s.frame_max_side,
+                thumb_size=self.s.thumb_size,
+            )
+        except UNREADABLE as exc:
+            log.warning("meme %s: could not read %s: %s", meme_id, meme["file_path"], exc)
+            await self._mark_failed(meme_id, f"could not read the file: {media_error(exc)}")
+            return
         fields: dict[str, Any] = {}
         provider, model = meme["provider"], meme["model"]
         app = await self.app_settings.get()
         transcript = meme["transcript"]
         audio: dict[str, Any] = {}
-        if meme["kind"] == "video" and prep.has_audio and (full or not meme["sounds"]):
+        if meme["kind"] == "video" and prep.has_audio and (full or not meme.get("sounds")):
             wav = workdir / "audio.wav"
             seconds = max(self.s.max_transcribe_seconds, self.s.audio_tag_seconds)
-            if await asyncio.to_thread(extract_audio, src, wav, seconds):
+            try:
+                extracted = await asyncio.to_thread(extract_audio, src, wav, seconds)
+            except Exception as exc:
+                log.warning("meme %s: could not extract audio: %s", meme_id, exc)
+                extracted = False
+            if extracted:
                 if full and app.transcribe and self.transcriber:
                     transcript = await self._transcribe(wav) or ""
                 audio = await self._listen(wav)
@@ -215,8 +245,8 @@ class Pipeline:
                 caption=meme["caption"],
                 filename=meme["original_name"],
                 extra=app.prompt_extra,
-                sounds=audio.get("sounds", meme["sounds"]),
-                song=audio.get("song", meme["song"]),
+                sounds=audio.get("sounds", meme.get("sounds") or []),
+                song=audio.get("song", meme.get("song") or ""),
             )
             fields, provider, model = await self._analyze(prompt, prep.frames, workdir, app)
             fields["transcript"] = transcript
@@ -262,11 +292,16 @@ class Pipeline:
             return None
 
     async def _listen(self, wav: Path) -> dict[str, Any]:
-        tags = await self.ml.audio_tags(wav)
-        song = ""
-        if self.song and (has_music(tags) or not tags):
-            song = await self.song.recognize(wav)
-        return {"sounds": labels(tags), "song": song}
+        try:
+            tags = await self.ml.audio_tags(wav)
+            out: dict[str, Any] = {} if tags is None else {"sounds": labels(tags), "song": ""}
+            if self.song and (not tags or has_music(tags)):
+                if song := await self.song.recognize(wav):
+                    out["song"] = song
+            return out
+        except Exception as exc:
+            log.warning("audio analysis failed, continuing without it: %s", exc)
+            return {}
 
     async def _analyze(self, prompt: str, frames: list[Path], workdir: Path, app) -> tuple[dict[str, Any], str, str]:
         reasons: list[str] = []
