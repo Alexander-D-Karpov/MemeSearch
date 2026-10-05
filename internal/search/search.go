@@ -288,7 +288,7 @@ fused AS (
 		SELECT id, r, 1.0 AS w FROM tv
 		UNION ALL SELECT id, r, 1.3 FROM tg
 		UNION ALL SELECT id, r, 1.2 FROM tp
-		UNION ALL SELECT id, r, CASE WHEN d < $7 THEN 1.6 WHEN d <= $8 THEN 1.1 ELSE 0.3 END FROM cv
+		UNION ALL SELECT id, r, CASE WHEN d < $7 THEN 4.0 WHEN d <= $8 THEN 2.4 ELSE 0.6 END FROM cv
 	) x GROUP BY id
 )
 SELECT f.id, f.score FROM fused f JOIN memes m ON m.id = f.id
