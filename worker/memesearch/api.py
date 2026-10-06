@@ -205,9 +205,9 @@ async def _refresh(sid: int) -> dict[str, Any]:
         )
         return {"status": "logged_out"}
     usage = info["usage"] or {}
-    threshold = settings.codex_max_usage_percent
-    if usage_pause_until(usage, threshold):
-        until = cooldown_from_usage(usage, settings.codex_default_cooldown_minutes, threshold)
+    threshold, weekly = settings.codex_limits
+    if usage_pause_until(usage, threshold, weekly):
+        until = cooldown_from_usage(usage, settings.codex_default_cooldown_minutes, threshold, weekly)
         await state.pool.execute(
             """UPDATE codex_sessions SET status='limited', cooldown_until=$5, email=$2, plan=$3, usage=$4,
             last_error=$6, last_check_at=now(), updated_at=now() WHERE id=$1""",
@@ -216,7 +216,7 @@ async def _refresh(sid: int) -> dict[str, Any]:
             str(info["plan"]),
             usage,
             until,
-            pause_reason(usage, threshold),
+            pause_reason(usage, threshold, weekly),
         )
         status = "limited"
     else:

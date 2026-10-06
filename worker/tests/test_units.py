@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from memesearch.codex import classify, cooldown_from_usage, pause_reason, usage_pause_until
+from memesearch.config import Settings
 from memesearch.prompt import SCHEMA, build_prompt, embedding_text, parse_response
 from memesearch.storage import rel_original, rel_thumb, safe_join, sniff
 
@@ -128,3 +129,29 @@ def test_pause_at_configured_usage_percent():
     assert until is not None and abs((until - reset).total_seconds()) < 2
     assert pause_reason(usage, 90).startswith("paused at 91% of the short-term limit")
     assert pause_reason(usage, 100) == ""
+
+
+def test_weekly_threshold_is_separate():
+    soon = datetime.now(timezone.utc) + timedelta(hours=2)
+    week = datetime.now(timezone.utc) + timedelta(days=4)
+    usage = {
+        "rateLimits": {
+            "primary": {"usedPercent": 10, "resetsAt": int(soon.timestamp())},
+            "secondary": {"usedPercent": 92, "resetsAt": int(week.timestamp())},
+        }
+    }
+    assert usage_pause_until(usage, 90) is not None
+    assert usage_pause_until(usage, 90, 100) is None
+    assert pause_reason(usage, 90, 100) == ""
+    assert pause_reason(usage, 90) == "paused at 92% of the weekly limit (CODEX_MAX_USAGE_PERCENT=90)"
+    assert pause_reason(usage, 100, 90) == "paused at 92% of the weekly limit (CODEX_MAX_WEEKLY_PERCENT=90)"
+    usage["rateLimits"]["primary"]["usedPercent"] = 95
+    until = usage_pause_until(usage, 90, 100)
+    assert until is not None and abs((until - soon).total_seconds()) < 2
+    assert pause_reason(usage, 90, 100).startswith("paused at 95% of the short-term limit")
+
+
+def test_weekly_setting_defaults_to_general_percent():
+    assert Settings(codex_max_usage_percent=90).codex_limits == (90, 90)
+    assert Settings(codex_max_usage_percent=90, codex_max_weekly_percent=100).codex_limits == (90, 100)
+    assert Settings(codex_max_usage_percent=90, codex_max_weekly_percent="").codex_limits == (90, 90)

@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     codex_timeout_seconds: int = 300
     codex_runtime_threads: int = 2
     codex_max_usage_percent: float = 100
+    codex_max_weekly_percent: float | None = None
     codex_usage_refresh_minutes: int = 15
     codex_default_cooldown_minutes: int = 30
     codex_login_timeout_seconds: int = 900
@@ -115,6 +116,7 @@ class Settings(BaseSettings):
         "telegram_proxy",
         "telegram_web_proxy",
         "telegram_cache_chat_id",
+        "codex_max_weekly_percent",
         mode="before",
     )
     @classmethod
@@ -139,6 +141,11 @@ class Settings(BaseSettings):
             return self.telegram_cache_chat_id
         ids = [int(x) for x in self.telegram_admin_ids.replace(" ", "").split(",") if x]
         return ids[0] if ids else None
+
+    @property
+    def codex_limits(self) -> tuple[float, float]:
+        weekly = self.codex_max_weekly_percent
+        return self.codex_max_usage_percent, self.codex_max_usage_percent if weekly is None else weekly
 
     @property
     def web_proxy(self) -> str | None:

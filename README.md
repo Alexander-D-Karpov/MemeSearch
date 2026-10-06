@@ -84,7 +84,7 @@ Meme pages carry Open Graph and Twitter tags. Images up to 5 MB in jpg/png/gif a
 
 ## Codex usage
 
-Usage bars refresh after every analysis and every `CODEX_USAGE_REFRESH_MINUTES` for idle sessions. `CODEX_MAX_USAGE_PERCENT` (default 100) pauses a session once its 5-hour or weekly window reaches that percent, e.g. `90` keeps a margin for using Codex yourself; it resumes by itself when that window resets, and memes waiting for it continue.
+Usage bars refresh after every analysis and every `CODEX_USAGE_REFRESH_MINUTES` for idle sessions. `CODEX_MAX_USAGE_PERCENT` (default 100) pauses a session once its 5-hour or weekly window reaches that percent, e.g. `90` keeps a margin for using Codex yourself, and `CODEX_MAX_WEEKLY_PERCENT` overrides it for the weekly window only (e.g. `100` to use up the week before it resets); it resumes by itself when that window resets, and memes waiting for it continue.
 
 ## Reprocessing
 
