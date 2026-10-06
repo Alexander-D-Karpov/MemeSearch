@@ -248,31 +248,46 @@ class CodexRuntime:
             return info
 
 
-def usage_pause_until(usage: dict[str, Any] | None, threshold: float) -> datetime | None:
+WINDOWS = (("primary", "short-term", "CODEX_MAX_USAGE_PERCENT"), ("secondary", "weekly", "CODEX_MAX_WEEKLY_PERCENT"))
+
+
+def _limits(threshold: float, weekly: float | None) -> dict[str, float]:
+    return {"primary": threshold, "secondary": threshold if weekly is None else weekly}
+
+
+def usage_pause_until(usage: dict[str, Any] | None, threshold: float, weekly: float | None = None) -> datetime | None:
     now = datetime.now(timezone.utc)
+    limits = _limits(threshold, weekly)
     best: datetime | None = None
     rl = (usage or {}).get("rateLimits") or {}
-    for key in ("primary", "secondary"):
+    for key, _, _ in WINDOWS:
         w = rl.get(key) or {}
-        if (w.get("usedPercent") or 0) >= threshold and w.get("resetsAt"):
+        if (w.get("usedPercent") or 0) >= limits[key] and w.get("resetsAt"):
             at = datetime.fromtimestamp(int(w["resetsAt"]), timezone.utc)
             if at > now and (best is None or at > best):
                 best = at
     return best
 
 
-def cooldown_from_usage(usage: dict[str, Any] | None, default_minutes: int, threshold: float = 100) -> datetime:
-    at = usage_pause_until(usage, threshold) or usage_pause_until(usage, min(threshold, 95))
+def cooldown_from_usage(
+    usage: dict[str, Any] | None, default_minutes: int, threshold: float = 100, weekly: float | None = None
+) -> datetime:
+    at = usage_pause_until(usage, threshold, weekly) or usage_pause_until(
+        usage, min(threshold, 95), None if weekly is None else min(weekly, 95)
+    )
     return at or datetime.now(timezone.utc) + timedelta(minutes=default_minutes)
 
 
-def pause_reason(usage: dict[str, Any] | None, threshold: float) -> str:
+def pause_reason(usage: dict[str, Any] | None, threshold: float, weekly: float | None = None) -> str:
+    limits = _limits(threshold, weekly)
     rl = (usage or {}).get("rateLimits") or {}
-    for key, name in (("primary", "short-term"), ("secondary", "weekly")):
+    for key, name, env in WINDOWS:
         w = rl.get(key) or {}
         used = w.get("usedPercent") or 0
-        if used >= threshold:
-            return f"paused at {used:.0f}% of the {name} limit (CODEX_MAX_USAGE_PERCENT={threshold:g})"
+        if used >= limits[key]:
+            if key == "secondary" and weekly is None:
+                env = "CODEX_MAX_USAGE_PERCENT"
+            return f"paused at {used:.0f}% of the {name} limit ({env}={limits[key]:g})"
     return ""
 
 
@@ -372,10 +387,10 @@ class CodexPool:
                 return CodexResult(fields, used_model, sid)
 
     async def store_usage(self, sid: int, usage: dict[str, Any] | None) -> None:
-        threshold = self.settings.codex_max_usage_percent
-        until = usage_pause_until(usage, threshold)
+        threshold, weekly = self.settings.codex_limits
+        until = usage_pause_until(usage, threshold, weekly)
         if until is not None:
-            reason = pause_reason(usage, threshold)
+            reason = pause_reason(usage, threshold, weekly)
             await self.pool.execute(
                 """UPDATE codex_sessions SET status='limited', cooldown_until=$2, last_error=$3,
                 usage=COALESCE($4::jsonb, usage), last_check_at=now(), updated_at=now() WHERE id=$1""",
@@ -427,7 +442,7 @@ class CodexPool:
                 usage = await self.runtime.rate_limits(codex)
         except Exception:
             pass
-        until = cooldown_from_usage(usage, self.settings.codex_default_cooldown_minutes, self.settings.codex_max_usage_percent)
+        until = cooldown_from_usage(usage, self.settings.codex_default_cooldown_minutes, *self.settings.codex_limits)
         await self.pool.execute(
             """UPDATE codex_sessions SET status='limited', cooldown_until=$2, last_error=$3,
             usage=COALESCE($4::jsonb, usage), fail_count=fail_count+1, updated_at=now() WHERE id=$1""",
