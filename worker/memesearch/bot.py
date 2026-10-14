@@ -292,6 +292,24 @@ async def upload(bot: Bot, chat_id: int, m: dict) -> tuple[str, str]:
     return file_id, file_type
 
 
+async def mark_cache_failed(meme_id: int, error: str) -> None:
+    log.info("cannot cache meme %s in telegram: %s", meme_id, error)
+    await ctx.pool.execute(
+        """UPDATE memes SET tg_cache_error=$2, tg_cache_attempts=tg_cache_attempts+1, tg_cache_failed_at=now()
+        WHERE id=$1""",
+        meme_id,
+        error[:500] or "error",
+    )
+
+
+async def telegram_reachable(bot: Bot) -> bool:
+    try:
+        await bot.get_me()
+        return True
+    except (TelegramNetworkError, asyncio.TimeoutError, OSError):
+        return False
+
+
 async def cache_one(bot: Bot, chat_id: int, m: dict) -> None:
     for _ in range(3):
         try:
@@ -299,18 +317,17 @@ async def cache_one(bot: Bot, chat_id: int, m: dict) -> None:
         except TelegramRetryAfter as exc:
             await asyncio.sleep(exc.retry_after + 1)
             continue
-        except (TelegramForbiddenError, TelegramNetworkError):
+        except TelegramForbiddenError:
             raise
+        except TelegramNetworkError as exc:
+            if not await telegram_reachable(bot):
+                raise
+            await mark_cache_failed(m["id"], f"upload failed: {exc}")
+            return
         except (TelegramAPIError, ValueError, OSError) as exc:
             if "chat not found" in str(exc).lower():
                 raise CacheChatUnavailable(str(exc)) from exc
-            log.info("cannot cache meme %s in telegram: %s", m["id"], exc)
-            await ctx.pool.execute(
-                """UPDATE memes SET tg_cache_error=$2, tg_cache_attempts=tg_cache_attempts+1, tg_cache_failed_at=now()
-                WHERE id=$1""",
-                m["id"],
-                str(exc)[:500] or "error",
-            )
+            await mark_cache_failed(m["id"], str(exc))
             return
         await ctx.pool.execute(
             "UPDATE memes SET tg_file_id=$2, tg_file_type=$3, tg_cache_error='' WHERE id=$1", m["id"], file_id, file_type

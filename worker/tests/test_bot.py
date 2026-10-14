@@ -1,3 +1,7 @@
+import asyncio
+
+import pytest
+from aiogram.exceptions import TelegramNetworkError
 from aiogram.types import (
     InlineQueryResultCachedGif,
     InlineQueryResultCachedPhoto,
@@ -7,6 +11,7 @@ from aiogram.types import (
     InlineQueryResultVideo,
 )
 
+from memesearch import bot
 from memesearch.bot import inline_result
 
 
@@ -71,3 +76,47 @@ def test_every_result_links_to_the_meme_page():
     for r in results:
         button = r.reply_markup.inline_keyboard[0][0]
         assert button.url == "https://ms.example/m/5" and button.text == "ms.example/m/5"
+
+
+class CachePool:
+    def __init__(self):
+        self.calls = []
+
+    async def execute(self, sql, *args):
+        self.calls.append((sql.split()[0], args))
+
+
+class FlakyBot:
+    def __init__(self, reachable):
+        self.reachable = reachable
+
+    async def get_me(self):
+        if not self.reachable:
+            raise TelegramNetworkError(method=None, message="down")
+        return object()
+
+
+def test_network_error_on_one_file_marks_it_failed(monkeypatch):
+    pool = CachePool()
+    monkeypatch.setattr(bot.ctx, "pool", pool, raising=False)
+
+    async def boom(*a):
+        raise TelegramNetworkError(method=None, message="Request timeout error")
+
+    monkeypatch.setattr(bot, "upload", boom)
+    asyncio.run(bot.cache_one(FlakyBot(True), 1, {"id": 7}))
+    assert pool.calls and pool.calls[0][1][0] == 7
+    assert "Request timeout error" in pool.calls[0][1][1]
+
+
+def test_network_outage_does_not_mark_memes(monkeypatch):
+    pool = CachePool()
+    monkeypatch.setattr(bot.ctx, "pool", pool, raising=False)
+
+    async def boom(*a):
+        raise TelegramNetworkError(method=None, message="Request timeout error")
+
+    monkeypatch.setattr(bot, "upload", boom)
+    with pytest.raises(TelegramNetworkError):
+        asyncio.run(bot.cache_one(FlakyBot(False), 1, {"id": 7}))
+    assert pool.calls == []
