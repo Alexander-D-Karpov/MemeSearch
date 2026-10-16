@@ -1,10 +1,13 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from memesearch.codex import classify, cooldown_from_usage, pause_reason, usage_pause_until
 from memesearch.config import Settings
+from memesearch.media import blurhash, faststart, needs_faststart
 from memesearch.prompt import SCHEMA, build_prompt, embedding_text, parse_response
 from memesearch.storage import rel_original, rel_thumb, safe_join, sniff
 
@@ -155,3 +158,27 @@ def test_weekly_setting_defaults_to_general_percent():
     assert Settings(codex_max_usage_percent=90).codex_limits == (90, 90)
     assert Settings(codex_max_usage_percent=90, codex_max_weekly_percent=100).codex_limits == (90, 100)
     assert Settings(codex_max_usage_percent=90, codex_max_weekly_percent="").codex_limits == (90, 90)
+
+
+def test_blurhash_matches_reference_encoder():
+    a = np.zeros((24, 32, 3), dtype="uint8")
+    a[..., 0] = np.linspace(0, 255, 32, dtype="uint8")[None, :]
+    a[..., 2] = np.linspace(255, 0, 24, dtype="uint8")[:, None]
+    assert blurhash(Image.fromarray(a)) == "L:HZ1m2GwxWroAWrjtfSfWfRfQfR"
+
+
+def box(kind: bytes, payload: int) -> bytes:
+    return (8 + payload).to_bytes(4, "big") + kind + b"\0" * payload
+
+
+def test_needs_faststart_reads_top_level_boxes(tmp_path: Path):
+    late = tmp_path / "late.mp4"
+    late.write_bytes(box(b"ftyp", 16) + box(b"mdat", 1000) + box(b"moov", 50))
+    early = tmp_path / "early.mp4"
+    early.write_bytes(box(b"ftyp", 16) + box(b"moov", 50) + box(b"mdat", 1000))
+    other = tmp_path / "clip.webm"
+    other.write_bytes(box(b"ftyp", 16) + box(b"mdat", 1000) + box(b"moov", 50))
+    assert needs_faststart(late)
+    assert not needs_faststart(early)
+    assert not needs_faststart(other)
+    assert not faststart(early)

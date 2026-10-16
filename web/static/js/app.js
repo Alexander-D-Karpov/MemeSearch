@@ -19,6 +19,88 @@
     img.replaceWith(box);
   }, true);
 
+  const B83 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~';
+  const d83 = (str) => [...str].reduce((v, c) => v * 83 + B83.indexOf(c), 0);
+  const toLinear = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const toSrgb = (v) => { v = Math.min(1, Math.max(0, v)); return Math.round((v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055) * 255); };
+  const signPow = (v, e) => Math.sign(v) * Math.abs(v) ** e;
+  const blurCache = new Map();
+  const blurhashURL = (hash) => {
+    if (blurCache.has(hash)) return blurCache.get(hash);
+    let url = '';
+    try {
+      const flag = d83(hash[0]);
+      const nx = (flag % 9) + 1;
+      const ny = Math.floor(flag / 9) + 1;
+      if (hash.length !== 4 + 2 * nx * ny) throw new Error('bad blurhash');
+      const max = (d83(hash[1]) + 1) / 166;
+      const colors = [];
+      const dc = d83(hash.slice(2, 6));
+      colors.push([toLinear(dc >> 16), toLinear((dc >> 8) & 255), toLinear(dc & 255)]);
+      for (let i = 1; i < nx * ny; i++) {
+        const v = d83(hash.slice(4 + i * 2, 6 + i * 2));
+        colors.push([Math.floor(v / 361), Math.floor(v / 19) % 19, v % 19].map((q) => signPow((q - 9) / 9, 2) * max));
+      }
+      const w = 32;
+      const h = 32;
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(w, h);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          let r = 0; let g = 0; let b = 0;
+          for (let j = 0; j < ny; j++) {
+            const cy = Math.cos((Math.PI * y * j) / h);
+            for (let i = 0; i < nx; i++) {
+              const basis = Math.cos((Math.PI * x * i) / w) * cy;
+              const c = colors[i + j * nx];
+              r += c[0] * basis; g += c[1] * basis; b += c[2] * basis;
+            }
+          }
+          const o = 4 * (x + y * w);
+          img.data[o] = toSrgb(r); img.data[o + 1] = toSrgb(g); img.data[o + 2] = toSrgb(b); img.data[o + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      url = canvas.toDataURL();
+    } catch { }
+    blurCache.set(hash, url);
+    return url;
+  };
+  const reveal = (img) => {
+    if (img.dataset.fade) return;
+    img.dataset.fade = '1';
+    if (img.complete && img.naturalWidth) return;
+    img.classList.add('fade');
+    img.addEventListener('load', () => img.classList.add('loaded'), { once: true });
+  };
+  const paintBlur = () => {
+    for (const el of document.querySelectorAll('[data-bh]:not([data-bh-done])')) {
+      el.dataset.bhDone = '1';
+      const url = blurhashURL(el.dataset.bh);
+      if (url) el.style.backgroundImage = `url(${url})`;
+      el.querySelectorAll('img').forEach(reveal);
+    }
+  };
+  paintBlur();
+  let blurQueued = false;
+  new MutationObserver(() => {
+    if (blurQueued) return;
+    blurQueued = true;
+    requestAnimationFrame(() => { blurQueued = false; paintBlur(); });
+  }).observe(document.body, { childList: true, subtree: true });
+
+  document.querySelectorAll('.viewer img[data-full]').forEach((img) => {
+    const full = new Image();
+    full.decoding = 'async';
+    full.src = img.dataset.full;
+    const swap = () => { img.src = full.src; img.removeAttribute('data-full'); };
+    if (full.decode) full.decode().then(swap, () => full.complete && full.naturalWidth && swap());
+    else full.onload = swap;
+  });
+
   const ROW = 4;
   const sizer = new ResizeObserver((entries) => {
     for (const { target } of entries) {

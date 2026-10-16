@@ -2,9 +2,11 @@
 {{$m := .Data.Meme}}
 {{$admin := .Admin}}
 <article class="meme" data-id="{{$m.ID}}">
-  <div class="viewer">
+  <div class="viewer"{{with $m.Blurhash}} data-bh="{{.}}"{{end}}>
     {{if eq $m.Kind "video"}}
-      <video src="{{$m.URL}}" {{if $m.ThumbURL}}poster="{{$m.ThumbURL}}"{{end}} controls loop playsinline preload="metadata"></video>
+      <video src="{{$m.URL}}" {{if $m.ThumbURL}}poster="{{$m.ThumbURL}}"{{end}}{{if and $m.Width $m.Height}} width="{{$m.Width}}" height="{{$m.Height}}"{{end}} controls loop playsinline preload="auto"></video>
+    {{else if $m.ThumbURL}}
+      <img src="{{$m.ThumbURL}}" data-full="{{$m.URL}}" alt="{{$m.Title}}"{{if and $m.Width $m.Height}} width="{{$m.Width}}" height="{{$m.Height}}"{{end}} fetchpriority="high">
     {{else}}
       <img src="{{$m.URL}}" alt="{{$m.Title}}"{{if and $m.Width $m.Height}} width="{{$m.Width}}" height="{{$m.Height}}"{{end}}>
     {{end}}

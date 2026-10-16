@@ -243,6 +243,9 @@ label.check { flex-direction: row !important; align-items: center; gap: 8px; fon
 }
 .card:hover .card-media { border-color: var(--text); }
 .card-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+[data-bh] { background-size: cover; background-position: center; }
+img.fade { opacity: 0; transition: opacity 0.25s ease; }
+img.fade.loaded { opacity: 1; }
 .noimg { display: grid; place-items: center; width: 100%; height: 100%; min-height: 160px; padding: 12px; text-align: center; color: var(--muted); font: 0.8rem/1.4 var(--mono); }
 .card-status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-tags { position: absolute; top: 8px; left: 8px; display: flex; gap: 4px; flex-wrap: wrap; }

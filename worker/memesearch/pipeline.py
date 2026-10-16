@@ -19,7 +19,7 @@ from .codex import CodexFailed, CodexPool, CodexTransient, CodexUnavailable, is_
 from .config import Settings
 from .db import SettingsCache, fetch_meme
 from .fallback import FallbackAnalyzer
-from .media import Prepared, extract_audio, prepare
+from .media import Prepared, extract_audio, faststart, prepare
 from .postfilter import analysis_verdict
 from .prompt import build_prompt, embedding_text
 from .rqueue import JobQueue
@@ -201,6 +201,12 @@ class Pipeline:
             await self._mark_failed(meme_id, f"file missing: {meme['file_path']}")
             return
         thumb_rel = rel_thumb(meme["sha256"])
+        if meme["kind"] == "video":
+            try:
+                if await asyncio.to_thread(faststart, src):
+                    log.info("meme %s: moved the video index to the front for fast playback", meme_id)
+            except Exception as exc:
+                log.warning("meme %s: could not remux the video for fast playback: %s", meme_id, exc)
         try:
             prep: Prepared = await asyncio.to_thread(
                 prepare,
@@ -367,6 +373,7 @@ class Pipeline:
             "provider=$8",
             "model=$9",
             "phash=COALESCE($10::text::bit(256), phash)",
+            "blurhash=CASE WHEN $11 <> '' THEN $11 ELSE blurhash END",
         ]
         args: list[Any] = [
             meme_id,
@@ -379,6 +386,7 @@ class Pipeline:
             provider or "",
             model or "",
             prep.phash,
+            prep.blurhash,
         ]
         for col in ("sounds", "song"):
             if audio and col in audio:
