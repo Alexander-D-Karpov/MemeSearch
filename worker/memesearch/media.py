@@ -6,6 +6,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageOps
 
 try:
@@ -28,6 +29,7 @@ class Prepared:
     frame_times: list[float] = field(default_factory=list)
     thumb: Path | None = None
     phash: str | None = None
+    blurhash: str = ""
 
 
 def _flatten(img: Image.Image) -> Image.Image:
@@ -65,6 +67,51 @@ def dhash(img: Image.Image, side: int = 16) -> str:
     return "".join("1" if px[y * w + x] > px[y * w + x + 1] else "0" for y in range(side) for x in range(side))
 
 
+B83 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~"
+
+
+def _b83(value: int, length: int) -> str:
+    return "".join(B83[(value // 83 ** (length - 1 - i)) % 83] for i in range(length))
+
+
+def _to_srgb(v: float) -> int:
+    v = min(max(v, 0.0), 1.0)
+    return int(v * 12.92 * 255 + 0.5) if v <= 0.0031308 else int((1.055 * v ** (1 / 2.4) - 0.055) * 255 + 0.5)
+
+
+def blurhash(img: Image.Image, cx: int = 4, cy: int = 3) -> str:
+    small = img.convert("RGB")
+    small.thumbnail((32, 32), Image.BILINEAR)
+    rgb = np.asarray(small, dtype=np.float64) / 255.0
+    lin = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    h, w = lin.shape[:2]
+    xs, ys = np.arange(w), np.arange(h)
+    factors = []
+    for j in range(cy):
+        for i in range(cx):
+            basis = np.outer(np.cos(np.pi * j * ys / h), np.cos(np.pi * i * xs / w))
+            norm = 1.0 if i == 0 and j == 0 else 2.0
+            factors.append(norm * (lin * basis[..., None]).sum(axis=(0, 1)) / (w * h))
+    dc, ac = factors[0], factors[1:]
+    out = _b83((cx - 1) + (cy - 1) * 9, 1)
+    if ac:
+        qmax = max(0, min(82, int(np.floor(max(np.abs(np.array(ac)).max(), 0) * 166 - 0.5))))
+        maximum = (qmax + 1) / 166
+    else:
+        qmax, maximum = 0, 1.0
+    out += _b83(qmax, 1)
+    out += _b83((_to_srgb(dc[0]) << 16) + (_to_srgb(dc[1]) << 8) + _to_srgb(dc[2]), 4)
+    for f in ac:
+        q = [max(0, min(18, int(np.floor(np.sign(v / maximum) * abs(v / maximum) ** 0.5 * 9 + 9.5)))) for v in f]
+        out += _b83(q[0] * 361 + q[1] * 19 + q[2], 2)
+    return out
+
+
+def thumb_blurhash(path: Path) -> str:
+    with Image.open(path) as im:
+        return blurhash(im)
+
+
 def hamming(a: str, b: str) -> int:
     return sum(x != y for x, y in zip(a, b, strict=True))
 
@@ -77,6 +124,7 @@ def _save_thumb(img: Image.Image, path: Path, size: int, p: Prepared) -> Path:
     tmp.replace(path)
     path.chmod(0o644)
     p.phash = dhash(t)
+    p.blurhash = blurhash(t)
     return path
 
 
@@ -184,6 +232,72 @@ def prepare_video(src: Path, workdir: Path, thumb_path: Path, max_frames: int, m
     with Image.open(poster) as im:
         p.thumb = _save_thumb(im.convert("RGB"), thumb_path, thumb_size, p)
     return p
+
+
+FASTSTART_EXTS = {".mp4": "mp4", ".m4v": "mp4", ".mov": "mov"}
+
+
+def needs_faststart(path: Path) -> bool:
+    if path.suffix.lower() not in FASTSTART_EXTS:
+        return False
+    size = path.stat().st_size
+    with path.open("rb") as f:
+        pos = 0
+        while pos + 8 <= size:
+            f.seek(pos)
+            head = f.read(16)
+            if len(head) < 8:
+                return False
+            box_size = int.from_bytes(head[:4], "big")
+            kind = head[4:8]
+            if box_size == 1 and len(head) >= 16:
+                box_size = int.from_bytes(head[8:16], "big")
+            elif box_size == 0:
+                box_size = size - pos
+            if kind == b"moov":
+                return False
+            if kind == b"mdat":
+                return True
+            if box_size < 8:
+                return False
+            pos += box_size
+    return False
+
+
+def faststart(path: Path) -> bool:
+    if not needs_faststart(path):
+        return False
+    tmp = path.with_name(path.name + ".faststart.tmp")
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(path),
+                "-map",
+                "0",
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+                "-f",
+                FASTSTART_EXTS[path.suffix.lower()],
+                str(tmp),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=600,
+        )
+        if needs_faststart(tmp) or tmp.stat().st_size < path.stat().st_size // 2:
+            raise ValueError("remuxed file looks wrong")
+        tmp.chmod(0o644)
+        tmp.replace(path)
+        return True
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def video_times(duration: float, max_frames: int) -> list[float]:

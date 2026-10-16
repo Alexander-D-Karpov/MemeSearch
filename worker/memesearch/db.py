@@ -18,7 +18,7 @@ async def _init(conn: asyncpg.Connection) -> None:
     await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
 
 
-SCHEMA_PROBE = "song"
+SCHEMA_PROBE = "blurhash"
 
 
 async def connect(dsn: str, min_size: int = 1, max_size: int = 10) -> asyncpg.Pool:

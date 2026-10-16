@@ -14,13 +14,15 @@ from .config import get_settings
 from .db import connect
 from .fallback import FallbackAnalyzer
 from .importer import Importer
-from .media import thumb_hash
+from .media import faststart, thumb_blurhash, thumb_hash
 from .pipeline import MLClient, Pipeline
 from .rqueue import STREAM_HIGH, STREAM_LOW, JobQueue, Message
 from .storage import Storage, safe_join
 from .transcribe import Transcriber
 
 log = logging.getLogger("memesearch.worker")
+
+FASTSTART_CURSOR = "ms:faststart:cursor"
 
 
 class Worker:
@@ -59,6 +61,7 @@ class Worker:
         self.active = 0
         self.background = 0
         self.phash_cursor = 0
+        self.blurhash_cursor = 0
         self.changed = asyncio.Condition()
 
     async def handle(self, msg: Message) -> None:
@@ -141,6 +144,10 @@ class Worker:
                     await self.wake_codex_waiters()
                 if tick % 60 == 30:
                     await self.backfill_phash()
+                if tick % 2 == 1:
+                    await self.backfill_blurhash()
+                if tick % 6 == 3:
+                    await self.backfill_faststart()
                 if tick % 120 == 90:
                     await self.auto_retry_failed()
                 if tick % 60 == 45:
@@ -238,6 +245,44 @@ class Worker:
             await self.pool.execute("UPDATE memes SET phash=$2::text::bit(256) WHERE id=$1 AND phash IS NULL", r["id"], h)
         if not rows:
             self.phash_cursor = 0
+
+    async def backfill_blurhash(self) -> None:
+        rows = await self.pool.fetch(
+            "SELECT id, thumb_path FROM memes WHERE blurhash = '' AND thumb_path <> '' AND id > $1 ORDER BY id LIMIT 300",
+            self.blurhash_cursor,
+        )
+        for r in rows:
+            self.blurhash_cursor = r["id"]
+            try:
+                bh = await asyncio.to_thread(thumb_blurhash, safe_join(self.s.upload_dir, r["thumb_path"]))
+            except Exception as exc:
+                log.debug("blurhash %s: %s", r["id"], exc)
+                continue
+            await self.pool.execute("UPDATE memes SET blurhash=$2 WHERE id=$1 AND blurhash = ''", r["id"], bh)
+        if not rows:
+            self.blurhash_cursor = 0
+
+    async def backfill_faststart(self) -> None:
+        cursor = int(await self.redis.get(FASTSTART_CURSOR) or 0)
+        rows = await self.pool.fetch(
+            "SELECT id, file_path FROM memes WHERE kind = 'video' AND id > $1 ORDER BY id LIMIT 40", cursor
+        )
+        if not rows:
+            return
+        fixed = 0
+        for r in rows:
+            cursor = r["id"]
+            if await self.redis.exists(f"ms:lock:meme:{r['id']}"):
+                continue
+            try:
+                fixed += await asyncio.to_thread(faststart, safe_join(self.s.upload_dir, r["file_path"]))
+            except Exception as exc:
+                log.debug("faststart %s: %s", r["id"], exc)
+            if fixed >= 5:
+                break
+        await self.redis.set(FASTSTART_CURSOR, cursor)
+        if fixed:
+            log.info("remuxed %d older videos for fast playback (up to meme %s)", fixed, cursor)
 
     async def _unlocked(self, ids: list[int], prefix: str) -> list[int]:
         if not ids:
