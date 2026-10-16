@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -385,3 +386,42 @@ def extract_audio(src: Path, dst: Path, max_seconds: int) -> bool:
     ]
     res = subprocess.run(cmd, capture_output=True, timeout=600)
     return res.returncode == 0 and dst.exists() and dst.stat().st_size > 1024
+
+
+@dataclass
+class MediaFix:
+    blurhash: str = ""
+    phash: str | None = None
+    regenerated: bool = False
+    remuxed: bool = False
+
+
+def regenerate_thumb(kind: str, src: Path, thumb_path: Path, size: int, max_frames: int) -> Prepared:
+    p = Prepared()
+    if kind == "video":
+        with tempfile.TemporaryDirectory() as d:
+            frame = Path(d) / "poster.jpg"
+            at = poster_time(video_duration(src), max_frames)
+            if not _video_frame(src, at, frame, 1024) and not _video_frame(src, 0, frame, 1024):
+                raise ValueError("could not extract a frame from the video")
+            with Image.open(frame) as im:
+                _save_thumb(im.convert("RGB"), thumb_path, size, p)
+        return p
+    with Image.open(src) as im:
+        img = _flatten(im)
+    _save_thumb(img, thumb_path, size, p)
+    return p
+
+
+def repair_media(kind: str, src: Path, thumb_path: Path, size: int, max_frames: int, need_blurhash: bool) -> MediaFix:
+    fix = MediaFix()
+    if not thumb_path.is_file():
+        if not src.is_file():
+            raise FileNotFoundError(f"the original file is missing ({src.name})")
+        p = regenerate_thumb(kind, src, thumb_path, size, max_frames)
+        fix.regenerated, fix.blurhash, fix.phash = True, p.blurhash, p.phash
+    elif need_blurhash:
+        fix.blurhash = thumb_blurhash(thumb_path)
+    if kind == "video" and src.is_file():
+        fix.remuxed = faststart(src)
+    return fix

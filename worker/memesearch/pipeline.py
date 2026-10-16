@@ -201,11 +201,13 @@ class Pipeline:
             await self._mark_failed(meme_id, f"file missing: {meme['file_path']}")
             return
         thumb_rel = rel_thumb(meme["sha256"])
+        media_ok = True
         if meme["kind"] == "video":
             try:
                 if await asyncio.to_thread(faststart, src):
                     log.info("meme %s: moved the video index to the front for fast playback", meme_id)
             except Exception as exc:
+                media_ok = False
                 log.warning("meme %s: could not remux the video for fast playback: %s", meme_id, exc)
         try:
             prep: Prepared = await asyncio.to_thread(
@@ -282,7 +284,7 @@ class Pipeline:
                 await self._save_fields(meme_id, fields, provider, model)
                 raise EmbedPending(f"analysis saved, embedding failed: {exc}") from exc
             raise
-        await self._save(meme_id, prep, thumb_rel, fields, provider, model, clip, text_vec, audio)
+        await self._save(meme_id, prep, thumb_rel, fields, provider, model, clip, text_vec, audio, media_ok)
         if verdict := analysis_verdict(fields):
             await self._hide_channel_meme(meme_id, verdict)
         await self.queue.bump()
@@ -358,6 +360,7 @@ class Pipeline:
         clip: np.ndarray | None,
         text_vec: np.ndarray | None,
         audio: dict[str, Any] | None = None,
+        media_ok: bool = True,
     ) -> None:
         sets = [
             "status='done'",
@@ -374,6 +377,9 @@ class Pipeline:
             "model=$9",
             "phash=COALESCE($10::text::bit(256), phash)",
             "blurhash=CASE WHEN $11 <> '' THEN $11 ELSE blurhash END",
+            "media_ok=$12",
+            "media_error=''",
+            "media_attempts=0",
         ]
         args: list[Any] = [
             meme_id,
@@ -387,6 +393,7 @@ class Pipeline:
             model or "",
             prep.phash,
             prep.blurhash,
+            media_ok,
         ]
         for col in ("sounds", "song"):
             if audio and col in audio:

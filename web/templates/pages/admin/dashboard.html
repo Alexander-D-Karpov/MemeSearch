@@ -62,6 +62,35 @@
   </section>
 </div>
 
+<section class="panel">
+  <h2>Thumbnails and video playback</h2>
+  {{with .Media}}
+  <p class="small muted">Checks every meme's preview: regenerates missing thumbnails, adds blurhash placeholders and moves the video index to the front for instant playback. State: <b>{{.State}}</b></p>
+  <div class="progress"><div class="bar"><div style="width:{{printf "%.1f" .Percent}}%"></div></div></div>
+  <dl class="facts">
+    <dt>Ready</dt><dd>{{.OK}} / {{.Total}} <span class="muted small">({{printf "%.1f" .Percent}}%)</span></dd>
+    <dt>Waiting</dt><dd>{{.Todo}}{{if .Videos}} <span class="muted small">incl. {{.Videos}} videos</span>{{end}}</dd>
+    <dt>Speed</dt><dd>{{if and .Rate .Todo}}{{printf "%.0f" .Rate}} / min{{with .ETA}} · {{.}}{{end}}{{else}}<span class="muted">—</span>{{end}}</dd>
+    <dt>Fixed so far</dt><dd>{{.Regenerated}} thumbnails regenerated · {{.Remuxed}} videos remuxed</dd>
+    <dt>Retrying</dt><dd>{{.Retrying}} <span class="muted small">automatic, after 10 min, 30 min, 90 min</span></dd>
+    <dt>Failed</dt><dd>{{if .Failed}}<span class="error">{{.Failed}}</span> <span class="muted small">after 3 attempts</span>{{else}}0{{end}}</dd>
+  </dl>
+  {{if or .Failed .Retrying}}
+  <div class="actions"><button class="btn" type="button" data-api="POST /api/v1/admin/media/retry" data-reload>Retry failed previews now</button></div>
+  {{end}}
+  {{if .Failures}}
+  <div class="table-wrap">
+    <table>
+      <tr><th>Meme</th><th>Kind</th><th>Attempts</th><th>Error</th><th>When</th></tr>
+      {{range .Failures}}
+      <tr><td><a href="/m/{{.ID}}">#{{.ID}}</a></td><td>{{.Kind}}</td><td>{{.Attempts}}</td><td class="error small">{{truncate 200 .Error}}</td><td>{{ago .FailedAt}}</td></tr>
+      {{end}}
+    </table>
+  </div>
+  {{end}}
+  {{end}}
+</section>
+
 {{if .Imports}}
 <section class="panel">
   <h2>Recent imports</h2>

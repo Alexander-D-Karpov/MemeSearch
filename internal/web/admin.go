@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -50,6 +51,7 @@ type Dashboard struct {
 	ETA             string
 	TransientFailed int64
 	TgCache         store.TgCache
+	Media           MediaProgress
 	Queue           queue.Lengths
 	Failures        []*store.Meme
 	Imports         []*store.ImportJob
@@ -78,6 +80,10 @@ func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.ETA = eta(d.Stats.ByStatus["pending"]+d.Stats.ByStatus["processing"], d.LastHour)
+	if d.Media, err = s.mediaProgress(ctx); err != nil {
+		storeErr(w, err)
+		return
+	}
 	d.Failures, _ = s.store.RecentFailures(ctx, 10)
 	s.decorate(d.Failures...)
 	d.Imports, _ = s.store.Imports(ctx, 5)
@@ -698,6 +704,65 @@ func (s *Server) writeML(w http.ResponseWriter, out json.RawMessage, err error) 
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(out)
+}
+
+const (
+	mediaStatsKey    = "ms:media:stats"
+	mediaMaxAttempts = 3
+)
+
+type MediaProgress struct {
+	store.MediaStats
+	Percent     float64
+	Rate        float64
+	Done        int64
+	Regenerated int64
+	Remuxed     int64
+	LastError   string
+	State       string
+	ETA         string
+	Failures    []store.MediaFailure
+}
+
+func (s *Server) mediaProgress(ctx context.Context) (MediaProgress, error) {
+	var p MediaProgress
+	var err error
+	if p.MediaStats, err = s.store.MediaStats(ctx, mediaMaxAttempts); err != nil {
+		return p, err
+	}
+	if p.Total > 0 {
+		p.Percent = float64(p.OK) * 100 / float64(p.Total)
+	}
+	h, _ := s.rdb.HGetAll(ctx, mediaStatsKey).Result()
+	num := func(k string) int64 { n, _ := strconv.ParseInt(h[k], 10, 64); return n }
+	p.Rate, _ = strconv.ParseFloat(h["rate"], 64)
+	p.Done, p.Regenerated, p.Remuxed, p.LastError = num("done"), num("regenerated"), num("remuxed"), h["last_error"]
+	seen := num("seen_at")
+	left := p.Todo
+	switch {
+	case seen == 0 || time.Since(time.Unix(seen, 0)) > 3*time.Minute:
+		p.State = "the worker is not running the media check"
+	case p.Todo == 0 && p.Retrying == 0:
+		p.State = "all done"
+	case p.Todo == 0:
+		p.State = "waiting to retry"
+	default:
+		p.State = "working"
+	}
+	if left > 0 && p.Rate > 0 {
+		p.ETA = eta(left, int64(p.Rate*60))
+	}
+	p.Failures, _ = s.store.MediaFailures(ctx, 5)
+	return p, nil
+}
+
+func (s *Server) apiRetryMedia(w http.ResponseWriter, r *http.Request) {
+	n, err := s.store.RetryMedia(r.Context())
+	if err != nil {
+		storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"queued": n})
 }
 
 func (s *Server) apiRetryTgCache(w http.ResponseWriter, r *http.Request) {

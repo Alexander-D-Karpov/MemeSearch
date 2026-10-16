@@ -412,6 +412,58 @@ func (s *Store) RetryTgCache(ctx context.Context) (int64, error) {
 	return tag.RowsAffected(), err
 }
 
+type MediaStats struct {
+	Total    int64
+	OK       int64
+	Todo     int64
+	Retrying int64
+	Failed   int64
+	Videos   int64
+}
+
+func (s *Store) MediaStats(ctx context.Context, maxAttempts int) (MediaStats, error) {
+	var m MediaStats
+	err := s.Pool.QueryRow(ctx, `SELECT count(*),
+		count(*) FILTER (WHERE media_ok),
+		count(*) FILTER (WHERE NOT media_ok AND media_error = ''),
+		count(*) FILTER (WHERE NOT media_ok AND media_error <> '' AND media_attempts < $1),
+		count(*) FILTER (WHERE NOT media_ok AND media_error <> '' AND media_attempts >= $1),
+		count(*) FILTER (WHERE NOT media_ok AND media_error = '' AND kind = 'video')
+		FROM memes WHERE thumb_path <> ''`, maxAttempts).Scan(&m.Total, &m.OK, &m.Todo, &m.Retrying, &m.Failed, &m.Videos)
+	return m, err
+}
+
+type MediaFailure struct {
+	ID       int64
+	Kind     string
+	Error    string
+	Attempts int
+	FailedAt *time.Time
+}
+
+func (s *Store) MediaFailures(ctx context.Context, limit int) ([]MediaFailure, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT id, kind, media_error, media_attempts, media_failed_at FROM memes
+		WHERE media_error <> '' ORDER BY media_failed_at DESC NULLS LAST LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MediaFailure
+	for rows.Next() {
+		var f MediaFailure
+		if err := rows.Scan(&f.ID, &f.Kind, &f.Error, &f.Attempts, &f.FailedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RetryMedia(ctx context.Context) (int64, error) {
+	tag, err := s.Pool.Exec(ctx, "UPDATE memes SET media_error = '', media_attempts = 0 WHERE media_error <> ''")
+	return tag.RowsAffected(), err
+}
+
 func (s *Store) AnalyzedSince(ctx context.Context, d time.Duration) (int64, error) {
 	var n int64
 	err := s.Pool.QueryRow(ctx, "SELECT count(*) FROM memes WHERE analyzed_at > now() - make_interval(secs => $1)", d.Seconds()).Scan(&n)
