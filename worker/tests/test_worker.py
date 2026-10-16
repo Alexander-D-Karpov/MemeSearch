@@ -202,3 +202,50 @@ def test_unexpected_error_is_retried_not_stuck(tmp_path, monkeypatch):
     assert row["status"] == "pending"
     assert row["error"] == "unexpected error: KeyError: 'surprise'"
     assert len(p.queue.delayed) == 1
+
+
+def test_import_runs_while_a_channel_holds_the_background_slot():
+    class Recorder(FakeQueue):
+        def __init__(self):
+            super().__init__()
+            self.delayed = []
+
+        async def delay(self, job, seconds, high=False):
+            self.delayed.append((job.get("id") or job.get("job_id"), seconds, high))
+
+    class SlowChannels:
+        async def run(self, cid, at):
+            await asyncio.sleep(0.05)
+
+    class Imports:
+        def __init__(self):
+            self.ran = []
+
+        async def run(self, job_id):
+            self.ran.append(job_id)
+
+    class StagePool:
+        def __init__(self):
+            self.stages = []
+
+        async def execute(self, sql, *args):
+            self.stages.append(args)
+
+    async def run():
+        w = Worker()
+        w.s.worker_concurrency, w.s.background_concurrency = 4, 1
+        w.queue, w.channels, w.importer, w.pool = Recorder(), SlowChannels(), Imports(), StagePool()
+        w.changed, w.active, w.background = asyncio.Condition(), 2, 0
+        ch = asyncio.create_task(w.handle(Message("ms:q:high", "1-0", {"type": "channel", "id": 1})))
+        await asyncio.sleep(0.01)
+        await w.handle(Message("ms:q:high", "2-0", {"type": "import", "job_id": 9}))
+        w.imports = 1
+        await w.handle(Message("ms:q:high", "3-0", {"type": "import", "job_id": 10}))
+        w.imports = 0
+        await ch
+        return w
+
+    w = asyncio.run(run())
+    assert w.importer.ran == [9]
+    assert w.queue.delayed == [(10, 10, True)]
+    assert w.pool.stages == [(10,)]

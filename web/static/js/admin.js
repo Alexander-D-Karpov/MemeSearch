@@ -200,44 +200,100 @@
       const xhr = new XMLHttpRequest();
       const bar = $('#zip-bar');
       const summary = $('#zip-summary');
+      const button = zipForm.querySelector('button');
+      const started = Date.now();
+      let sentAt = 0;
+      let waitTimer;
       $('#zip-progress').hidden = false;
-      zipForm.querySelector('button').disabled = true;
+      bar.style.width = '0%';
+      button.disabled = true;
+      summary.textContent = 'Starting upload…';
+      pollImports(true, 2000);
       xhr.open('POST', '/api/v1/admin/import/zip');
       xhr.upload.onprogress = (ev) => {
-        const pct = Math.round((ev.loaded / ev.total) * 100);
+        if (!ev.lengthComputable) return;
+        const pct = Math.floor((ev.loaded / ev.total) * 100);
+        const secs = (Date.now() - started) / 1000;
+        const speed = ev.loaded / Math.max(secs, 0.5);
+        const left = speed > 0 ? (ev.total - ev.loaded) / speed : 0;
         bar.style.width = `${pct}%`;
-        summary.textContent = `Uploading ${pct}% (${(ev.loaded / 1048576).toFixed(0)} / ${(ev.total / 1048576).toFixed(0)} MB)`;
+        summary.textContent = `Sending ${pct}% · ${mb(ev.loaded)} / ${mb(ev.total)} MB · ${mb(speed)} MB/s · ${dur(left)} left`;
+      };
+      xhr.upload.onload = () => {
+        sentAt = Date.now();
+        bar.style.width = '100%';
+        const tick = () => {
+          summary.textContent = `Sent from the browser ${dur((Date.now() - sentAt) / 1000)} ago. The server is still receiving and saving the archive — watch "received" in Import jobs below.`;
+        };
+        tick();
+        waitTimer = setInterval(tick, 1000);
       };
       xhr.onloadend = () => {
-        zipForm.querySelector('button').disabled = false;
+        clearInterval(waitTimer);
+        button.disabled = false;
         let data = {};
         try { data = JSON.parse(xhr.responseText); } catch { }
         if (xhr.status === 200) {
-          summary.textContent = `Uploaded. Import job #${data.job_id} is extracting on the server.`;
-          pollImports(true);
+          summary.textContent = `Saved on the server (${mb(data.bytes || file.size)} MB) in ${dur((Date.now() - started) / 1000)}. Import job #${data.job_id} is queued; its progress is below.`;
         } else {
-          summary.textContent = `Failed: ${data.error || xhr.status}`;
+          summary.textContent = `Failed: ${uploadError(xhr, data)}`;
         }
+        pollImports(true, 2000);
       };
       xhr.send(fd);
     });
   }
 
+  function mb(bytes) { return (bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 0); }
+  function dur(s) {
+    s = Math.max(0, Math.round(s));
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+    return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  }
+  function uploadError(xhr, data) {
+    if (data.error) return data.error;
+    if (xhr.status === 0) return 'the connection was cut (network or proxy). Check Import jobs below: if the job says "failed", upload again.';
+    if (xhr.status === 413) return 'the archive is larger than the proxy allows (nginx client_max_body_size).';
+    if (xhr.status === 502 || xhr.status === 504) return `the proxy gave up waiting (${xhr.status}). The server may still be receiving the file — check Import jobs below.`;
+    return `HTTP ${xhr.status}`;
+  }
+
   const importsTable = $('#imports');
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const ago = (t) => (Date.now() - new Date(t).getTime()) / 1000;
+  const importProgress = (j) => {
+    const done = j.added + j.duplicates + j.skipped + j.failed;
+    if (j.status === 'uploading') {
+      const total = j.bytes_total ? ` / ${mb(j.bytes_total)}` : '';
+      const stale = ago(j.updated_at) > 20 ? ` · <span class="error">no data for ${dur(ago(j.updated_at))}</span>` : '';
+      return `received ${mb(j.bytes_done)}${total} MB${stale}`;
+    }
+    if (j.status === 'pending') return `queued ${dur(ago(j.created_at))}`;
+    if (j.status === 'running') {
+      if (!j.total) return `started ${dur(ago(j.started_at))} ago`;
+      const pct = Math.floor((done / j.total) * 100);
+      return `${done} / ${j.total} files (${pct}%)<div class="progress"><div class="bar"><div style="width:${pct}%"></div></div></div>`;
+    }
+    const took = j.started_at && j.finished_at ? ` in ${dur((new Date(j.finished_at) - new Date(j.started_at)) / 1000)}` : '';
+    return j.total ? `${done} / ${j.total} files${took}` : took.trim();
+  };
   let pollTimer;
-  const pollImports = async (force) => {
+  const pollImports = async (force, every = 3000) => {
     if (!importsTable) return;
     clearTimeout(pollTimer);
     try {
       const data = await api('GET', importsTable.dataset.poll);
       importsTable.tBodies[0].innerHTML = data.imports.map((j) => `<tr>
-        <td>${j.id}</td><td>${esc(j.kind)}</td><td>${esc(j.name)}</td>
-        <td class="status-${esc(j.status)}">${esc(j.status)}</td><td>${j.total}</td><td>${j.added}</td>
+        <td>${j.id}</td><td>${esc(j.name)}</td>
+        <td class="status-${esc(j.status)}">${esc(j.status)}${j.stage ? `<br><span class="small muted">${esc(j.stage)}</span>` : ''}</td>
+        <td class="small">${importProgress(j)}</td><td>${j.added}</td>
         <td>${j.duplicates}</td><td>${j.skipped}</td><td>${j.failed}</td><td class="error small">${esc(j.error)}</td></tr>`).join('');
-      const active = data.imports.some((j) => j.status === 'pending' || j.status === 'running');
-      if (active || force) pollTimer = setTimeout(() => pollImports(false), 3000);
-    } catch { }
+      const active = data.imports.some((j) => ['uploading', 'pending', 'running'].includes(j.status));
+      if (active || force) pollTimer = setTimeout(() => pollImports(false, every), active ? Math.min(every, 2000) : every);
+    } catch {
+      pollTimer = setTimeout(() => pollImports(force, every), 5000);
+    }
   };
   if (importsTable) pollImports(false);
 

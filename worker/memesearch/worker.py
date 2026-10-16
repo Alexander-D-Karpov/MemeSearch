@@ -29,6 +29,7 @@ class Worker:
         self.consumer = f"{socket.gethostname()}-{os.getpid()}"
         self.stop = asyncio.Event()
         self.tasks: set[asyncio.Task] = set()
+        self.imports = 0
 
     async def setup(self) -> None:
         self.s.ensure_dirs()
@@ -66,16 +67,28 @@ class Worker:
             kind = msg.job.get("type")
             if kind == "process":
                 await self.pipeline.handle(msg.job)
-            elif kind in ("import", "channel"):
-                if self.background >= max(1, min(self.s.background_concurrency, self.s.worker_concurrency - 1)):
+            elif kind == "import":
+                if self.imports >= 1 or self.background + self.imports >= max(1, self.s.worker_concurrency - 1):
+                    await self.pool.execute(
+                        "UPDATE import_jobs SET stage='waiting for a free worker slot', updated_at=now() "
+                        "WHERE id=$1 AND status='pending'",
+                        int(msg.job["job_id"]),
+                    )
+                    await self.queue.delay(msg.job, 10, high=True)
+                    return
+                self.imports += 1
+                try:
+                    await self.importer.run(int(msg.job["job_id"]))
+                finally:
+                    self.imports -= 1
+            elif kind == "channel":
+                cap = max(1, min(self.s.background_concurrency, self.s.worker_concurrency - 1 - self.imports))
+                if self.background >= cap:
                     await self.queue.delay(msg.job, 30, high=True)
                     return
                 self.background += 1
                 try:
-                    if kind == "import":
-                        await self.importer.run(int(msg.job["job_id"]))
-                    else:
-                        await self.channels.run(int(msg.job["id"]), float(msg.job.get("at") or 0))
+                    await self.channels.run(int(msg.job["id"]), float(msg.job.get("at") or 0))
                 finally:
                     self.background -= 1
             else:

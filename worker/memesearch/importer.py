@@ -94,7 +94,12 @@ class Importer:
         job = await self.pool.fetchrow("SELECT * FROM import_jobs WHERE id=$1", job_id)
         if job is None or job["status"] in ("done", "failed"):
             return
-        await self.pool.execute("UPDATE import_jobs SET status='running', started_at=now(), error='' WHERE id=$1", job_id)
+        await self.pool.execute(
+            """UPDATE import_jobs SET status='running', started_at=now(), error='', stage=$2, updated_at=now()
+            WHERE id=$1""",
+            job_id,
+            "opening the archive" if job["kind"] == "zip" else "listing files",
+        )
         c = Counters()
         try:
             if job["kind"] == "zip":
@@ -111,6 +116,7 @@ class Importer:
         await self.pool.execute(
             """UPDATE import_jobs SET added=$2, duplicates=$3, skipped=$4, failed=$5,
             status=COALESCE($6, status), error=CASE WHEN $7 <> '' THEN $7 ELSE error END,
+            stage=CASE WHEN $6 IS NOT NULL THEN '' ELSE stage END, updated_at=now(),
             finished_at=CASE WHEN $6 IS NOT NULL THEN now() ELSE finished_at END WHERE id=$1""",
             job_id,
             c.added,
@@ -153,7 +159,9 @@ class Importer:
                 if info.is_dir() or "__MACOSX" in p.parts or p.name.startswith("."):
                     continue
                 entries.append(info)
-            await self.pool.execute("UPDATE import_jobs SET total=$2 WHERE id=$1", job_id, len(entries))
+            await self.pool.execute(
+                "UPDATE import_jobs SET total=$2, stage='importing files', updated_at=now() WHERE id=$1", job_id, len(entries)
+            )
             for n, info in enumerate(entries, 1):
                 if info.file_size > self.storage.max_bytes:
                     c.skipped += 1
@@ -164,14 +172,16 @@ class Importer:
                         return self.storage.stage(src)
 
                 await self._one(c, stage, PurePosixPath(info.filename).name, "zip", f"{zip_name}:{info.filename}")
-                if n % 20 == 0:
+                if n % 5 == 0:
                     await self._progress(job_id, c)
         finally:
             zf.close()
 
     async def _dir(self, job_id: int, root: Path, c: Counters) -> None:
         files = await asyncio.to_thread(lambda: sorted(p for p in root.rglob("*") if p.is_file() and not p.name.startswith(".")))
-        await self.pool.execute("UPDATE import_jobs SET total=$2 WHERE id=$1", job_id, len(files))
+        await self.pool.execute(
+            "UPDATE import_jobs SET total=$2, stage='importing files', updated_at=now() WHERE id=$1", job_id, len(files)
+        )
         for n, path in enumerate(files, 1):
             if path.suffix.lower() not in MEDIA_SUFFIXES:
                 c.skipped += 1

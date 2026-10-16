@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Alexander-D-Karpov/MemeSearch/internal/ingest"
@@ -251,6 +252,19 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"results": results, "added": added})
 }
 
+const uploadProgressEvery = 2 * time.Second
+
+type countingWriter struct {
+	w io.Writer
+	n atomic.Int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n.Add(int64(n))
+	return n, err
+}
+
 func (s *Server) apiImportZip(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxZipBytes)
 	mr, err := r.MultipartReader()
@@ -285,29 +299,54 @@ func (s *Server) apiImportZip(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	id, err := s.store.CreateUpload(r.Context(), part.FileName(), dst, max(r.ContentLength, 0))
+	if err != nil {
+		f.Close()
+		os.Remove(dst)
+		storeErr(w, err)
+		return
+	}
+	fail := func(code int, msg string) {
+		f.Close()
+		os.Remove(dst)
+		s.store.FailImport(context.WithoutCancel(r.Context()), id, msg)
+		writeErr(w, code, errors.New(msg))
+	}
 	head := make([]byte, 4)
 	n, _ := io.ReadFull(part, head)
 	if n < 4 || !bytes.Equal(head, []byte("PK\x03\x04")) {
-		f.Close()
-		os.Remove(dst)
-		writeErr(w, http.StatusBadRequest, errors.New("not a zip archive"))
+		fail(http.StatusBadRequest, "not a zip archive")
 		return
 	}
 	f.Write(head)
-	if _, err := io.Copy(f, part); err != nil {
-		f.Close()
-		os.Remove(dst)
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("upload interrupted: %w", err))
+	cw := &countingWriter{w: f}
+	cw.n.Store(int64(n))
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(uploadProgressEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				s.store.UploadProgress(context.Background(), id, cw.n.Load())
+			}
+		}
+	}()
+	_, err = io.Copy(cw, part)
+	close(done)
+	if err != nil {
+		fail(http.StatusBadRequest, fmt.Sprintf("upload interrupted after %d MB: %v", cw.n.Load()>>20, err))
 		return
 	}
 	if err := f.Close(); err != nil {
 		os.Remove(dst)
+		s.store.FailImport(context.WithoutCancel(r.Context()), id, err.Error())
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	id, err := s.store.CreateImport(r.Context(), "zip", part.FileName(), dst)
-	if err != nil {
-		os.Remove(dst)
+	if err := s.store.UploadFinished(r.Context(), id, cw.n.Load()); err != nil {
 		storeErr(w, err)
 		return
 	}
@@ -315,7 +354,7 @@ func (s *Server) apiImportZip(w http.ResponseWriter, r *http.Request) {
 		storeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"job_id": id})
+	writeJSON(w, http.StatusOK, map[string]any{"job_id": id, "bytes": cw.n.Load()})
 }
 
 func (s *Server) apiImportInbox(w http.ResponseWriter, r *http.Request) {
