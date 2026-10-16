@@ -24,9 +24,13 @@ type ImportJob struct {
 	Skipped    int        `json:"skipped"`
 	Failed     int        `json:"failed"`
 	Error      string     `json:"error"`
+	Stage      string     `json:"stage"`
+	BytesTotal int64      `json:"bytes_total"`
+	BytesDone  int64      `json:"bytes_done"`
 	CreatedAt  time.Time  `json:"created_at"`
 	StartedAt  *time.Time `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 func (s *Store) CreateImport(ctx context.Context, kind, name, path string) (int64, error) {
@@ -37,7 +41,8 @@ func (s *Store) CreateImport(ctx context.Context, kind, name, path string) (int6
 
 func (s *Store) Imports(ctx context.Context, limit int) ([]*ImportJob, error) {
 	rows, err := s.Pool.Query(ctx, `SELECT id, kind, name, path, status, total, added, duplicates, skipped, failed, error,
-		created_at, started_at, finished_at FROM import_jobs ORDER BY id DESC LIMIT $1`, limit)
+		stage, bytes_total, bytes_done, created_at, started_at, finished_at, updated_at
+		FROM import_jobs ORDER BY id DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -46,12 +51,44 @@ func (s *Store) Imports(ctx context.Context, limit int) ([]*ImportJob, error) {
 	for rows.Next() {
 		j := &ImportJob{}
 		if err := rows.Scan(&j.ID, &j.Kind, &j.Name, &j.Path, &j.Status, &j.Total, &j.Added, &j.Duplicates, &j.Skipped,
-			&j.Failed, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt); err != nil {
+			&j.Failed, &j.Error, &j.Stage, &j.BytesTotal, &j.BytesDone, &j.CreatedAt, &j.StartedAt, &j.FinishedAt,
+			&j.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, j)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) CreateUpload(ctx context.Context, name, path string, size int64) (int64, error) {
+	var id int64
+	err := s.Pool.QueryRow(ctx, `INSERT INTO import_jobs(kind, name, path, status, stage, bytes_total)
+		VALUES ('zip', $1, $2, 'uploading', 'receiving the archive', $3) RETURNING id`, name, path, size).Scan(&id)
+	return id, err
+}
+
+func (s *Store) UploadProgress(ctx context.Context, id, done int64) error {
+	_, err := s.Pool.Exec(ctx, "UPDATE import_jobs SET bytes_done=$2, updated_at=now() WHERE id=$1 AND status='uploading'", id, done)
+	return err
+}
+
+func (s *Store) UploadFinished(ctx context.Context, id, size int64) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE import_jobs SET status='pending', stage='queued for import', bytes_done=$2,
+		bytes_total=$2, updated_at=now() WHERE id=$1`, id, size)
+	return err
+}
+
+func (s *Store) FailImport(ctx context.Context, id int64, msg string) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE import_jobs SET status='failed', stage='', error=$2, finished_at=now(), updated_at=now()
+		WHERE id=$1 AND status IN ('uploading', 'pending')`, id, msg)
+	return err
+}
+
+func (s *Store) FailInterruptedUploads(ctx context.Context) (int64, error) {
+	tag, err := s.Pool.Exec(ctx, `UPDATE import_jobs SET status='failed', stage='',
+		error='upload was interrupted (the server restarted), upload the archive again', finished_at=now(), updated_at=now()
+		WHERE status='uploading'`)
+	return tag.RowsAffected(), err
 }
 
 type CodexSession struct {

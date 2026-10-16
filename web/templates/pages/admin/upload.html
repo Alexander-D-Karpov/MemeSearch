@@ -44,10 +44,10 @@
 <section class="panel">
   <h2>Import jobs</h2>
   <table id="imports" data-poll="/api/v1/admin/imports">
-    <thead><tr><th>#</th><th>Kind</th><th>Name</th><th>Status</th><th>Total</th><th>Added</th><th>Dup</th><th>Skipped</th><th>Failed</th><th>Error</th></tr></thead>
+    <thead><tr><th>#</th><th>Name</th><th>Status</th><th>Progress</th><th>Added</th><th>Dup</th><th>Skipped</th><th>Failed</th><th>Error</th></tr></thead>
     <tbody>
     {{range .Imports}}
-    <tr><td>{{.ID}}</td><td>{{.Kind}}</td><td>{{.Name}}</td><td class="status-{{.Status}}">{{.Status}}</td><td>{{.Total}}</td><td>{{.Added}}</td><td>{{.Duplicates}}</td><td>{{.Skipped}}</td><td>{{.Failed}}</td><td class="error small">{{.Error}}</td></tr>
+    <tr><td>{{.ID}}</td><td>{{.Name}}</td><td class="status-{{.Status}}">{{.Status}}{{with .Stage}}<br><span class="small muted">{{.}}</span>{{end}}</td><td>{{if .Total}}{{.Total}} files{{end}}</td><td>{{.Added}}</td><td>{{.Duplicates}}</td><td>{{.Skipped}}</td><td>{{.Failed}}</td><td class="error small">{{.Error}}</td></tr>
     {{end}}
     </tbody>
   </table>

@@ -67,6 +67,9 @@ func run() error {
 		}
 	}
 	defer st.Close()
+	if n, err := st.FailInterruptedUploads(ctx); err == nil && n > 0 {
+		slog.Warn("marked interrupted archive uploads as failed", "count", n)
+	}
 
 	ropts, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
