@@ -7,7 +7,7 @@ from PIL import Image
 
 from memesearch.codex import classify, cooldown_from_usage, pause_reason, usage_pause_until
 from memesearch.config import Settings
-from memesearch.media import blurhash, faststart, needs_faststart
+from memesearch.media import blurhash, faststart, needs_faststart, repair_media
 from memesearch.prompt import SCHEMA, build_prompt, embedding_text, parse_response
 from memesearch.storage import rel_original, rel_thumb, safe_join, sniff
 
@@ -182,3 +182,15 @@ def test_needs_faststart_reads_top_level_boxes(tmp_path: Path):
     assert not needs_faststart(early)
     assert not needs_faststart(other)
     assert not faststart(early)
+
+
+def test_repair_media_regenerates_missing_thumb_and_reports_missing_original(tmp_path: Path):
+    src = tmp_path / "orig.png"
+    Image.new("RGB", (640, 480), (200, 40, 40)).save(src)
+    thumb = tmp_path / "thumbs" / "t.webp"
+    fix = repair_media("image", src, thumb, 480, 6, need_blurhash=True)
+    assert fix.regenerated and thumb.is_file() and len(fix.blurhash) == 28 and fix.phash
+    again = repair_media("image", src, thumb, 480, 6, need_blurhash=False)
+    assert not again.regenerated and again.blurhash == ""
+    with pytest.raises(FileNotFoundError, match="original file is missing"):
+        repair_media("image", tmp_path / "gone.png", tmp_path / "thumbs" / "x.webp", 480, 6, need_blurhash=True)

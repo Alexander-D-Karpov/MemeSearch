@@ -5,7 +5,10 @@ import logging
 import os
 import signal
 import socket
+import time
+from collections import deque
 
+import asyncpg
 from redis.asyncio import Redis
 
 from .channels import ChannelImporter, claim_due
@@ -14,15 +17,18 @@ from .config import get_settings
 from .db import connect
 from .fallback import FallbackAnalyzer
 from .importer import Importer
-from .media import faststart, thumb_blurhash, thumb_hash
-from .pipeline import MLClient, Pipeline
+from .media import repair_media, thumb_hash
+from .pipeline import UNREADABLE, MLClient, Pipeline, media_error
 from .rqueue import STREAM_HIGH, STREAM_LOW, JobQueue, Message
 from .storage import Storage, safe_join
 from .transcribe import Transcriber
 
 log = logging.getLogger("memesearch.worker")
 
-FASTSTART_CURSOR = "ms:faststart:cursor"
+MEDIA_STATS = "ms:media:stats"
+MEDIA_BATCH = 20
+MEDIA_ATTEMPTS = 3
+MEDIA_IDLE_SECONDS = 30
 
 
 class Worker:
@@ -61,7 +67,8 @@ class Worker:
         self.active = 0
         self.background = 0
         self.phash_cursor = 0
-        self.blurhash_cursor = 0
+        self.media_retry_at = 0.0
+        self.media_done: deque[float] = deque()
         self.changed = asyncio.Condition()
 
     async def handle(self, msg: Message) -> None:
@@ -144,10 +151,6 @@ class Worker:
                     await self.wake_codex_waiters()
                 if tick % 60 == 30:
                     await self.backfill_phash()
-                if tick % 2 == 1:
-                    await self.backfill_blurhash()
-                if tick % 6 == 3:
-                    await self.backfill_faststart()
                 if tick % 120 == 90:
                     await self.auto_retry_failed()
                 if tick % 60 == 45:
@@ -246,43 +249,90 @@ class Worker:
         if not rows:
             self.phash_cursor = 0
 
-    async def backfill_blurhash(self) -> None:
-        rows = await self.pool.fetch(
-            "SELECT id, thumb_path FROM memes WHERE blurhash = '' AND thumb_path <> '' AND id > $1 ORDER BY id LIMIT 300",
-            self.blurhash_cursor,
-        )
-        for r in rows:
-            self.blurhash_cursor = r["id"]
+    async def media_loop(self) -> None:
+        while not self.stop.is_set():
             try:
-                bh = await asyncio.to_thread(thumb_blurhash, safe_join(self.s.upload_dir, r["thumb_path"]))
+                done = await self.repair_media_batch()
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
-                log.debug("blurhash %s: %s", r["id"], exc)
-                continue
-            await self.pool.execute("UPDATE memes SET blurhash=$2 WHERE id=$1 AND blurhash = ''", r["id"], bh)
-        if not rows:
-            self.blurhash_cursor = 0
+                log.warning("media backfill: %s", exc)
+                done = 0
+            try:
+                await asyncio.wait_for(self.stop.wait(), timeout=1 if done else MEDIA_IDLE_SECONDS)
+            except asyncio.TimeoutError:
+                pass
 
-    async def backfill_faststart(self) -> None:
-        cursor = int(await self.redis.get(FASTSTART_CURSOR) or 0)
+    async def repair_media_batch(self) -> int:
+        now = time.monotonic()
+        if now - self.media_retry_at > 60:
+            self.media_retry_at = now
+            n = await self.pool.fetchval(
+                """WITH r AS (UPDATE memes SET media_error = '' WHERE media_error <> '' AND media_attempts < $1
+                AND media_failed_at < now() - interval '10 minutes' * power(3, media_attempts - 1) RETURNING 1)
+                SELECT count(*) FROM r""",
+                MEDIA_ATTEMPTS,
+            )
+            if n:
+                log.info("retrying media repair for %d memes", n)
         rows = await self.pool.fetch(
-            "SELECT id, file_path FROM memes WHERE kind = 'video' AND id > $1 ORDER BY id LIMIT 40", cursor
+            """SELECT id, kind, file_path, thumb_path, blurhash FROM memes
+            WHERE NOT media_ok AND media_error = '' AND thumb_path <> '' ORDER BY id DESC LIMIT $1""",
+            MEDIA_BATCH,
         )
-        if not rows:
-            return
-        fixed = 0
+        await self.redis.hset(MEDIA_STATS, mapping={"seen_at": int(time.time())})
+        done = 0
         for r in rows:
-            cursor = r["id"]
+            if self.stop.is_set():
+                break
             if await self.redis.exists(f"ms:lock:meme:{r['id']}"):
                 continue
-            try:
-                fixed += await asyncio.to_thread(faststart, safe_join(self.s.upload_dir, r["file_path"]))
-            except Exception as exc:
-                log.debug("faststart %s: %s", r["id"], exc)
-            if fixed >= 5:
-                break
-        await self.redis.set(FASTSTART_CURSOR, cursor)
-        if fixed:
-            log.info("remuxed %d older videos for fast playback (up to meme %s)", fixed, cursor)
+            await self.repair_one(r)
+            done += 1
+        return done
+
+    async def repair_one(self, r: asyncpg.Record) -> None:
+        try:
+            fix = await asyncio.to_thread(
+                repair_media,
+                r["kind"],
+                safe_join(self.s.upload_dir, r["file_path"]),
+                safe_join(self.s.upload_dir, r["thumb_path"]),
+                self.s.thumb_size,
+                self.s.max_video_frames,
+                not r["blurhash"],
+            )
+        except Exception as exc:
+            error = media_error(exc) if isinstance(exc, UNREADABLE) else (str(exc) or type(exc).__name__)
+            await self.pool.execute(
+                """UPDATE memes SET media_attempts = media_attempts + 1, media_error = $2, media_failed_at = now()
+                WHERE id = $1""",
+                r["id"],
+                error[:500],
+            )
+            await self.redis.hincrby(MEDIA_STATS, "failed", 1)
+            await self.redis.hset(MEDIA_STATS, mapping={"last_error": f"#{r['id']}: {error[:300]}"})
+            log.info("media repair for meme %s failed: %s", r["id"], error)
+            return
+        await self.pool.execute(
+            """UPDATE memes SET media_ok = true, media_error = '', media_attempts = 0,
+            blurhash = CASE WHEN $2 <> '' THEN $2 ELSE blurhash END,
+            phash = COALESCE($3::text::bit(256), phash) WHERE id = $1""",
+            r["id"],
+            fix.blurhash,
+            fix.phash,
+        )
+        self.media_done.append(time.time())
+        while self.media_done and self.media_done[0] < time.time() - 600:
+            self.media_done.popleft()
+        pipe = self.redis.pipeline(transaction=False)
+        pipe.hincrby(MEDIA_STATS, "done", 1)
+        if fix.regenerated:
+            pipe.hincrby(MEDIA_STATS, "regenerated", 1)
+        if fix.remuxed:
+            pipe.hincrby(MEDIA_STATS, "remuxed", 1)
+        pipe.hset(MEDIA_STATS, mapping={"rate": round(len(self.media_done) / 10, 1), "seen_at": int(time.time())})
+        await pipe.execute()
 
     async def _unlocked(self, ids: list[int], prefix: str) -> list[int]:
         if not ids:
@@ -301,6 +351,7 @@ class Worker:
         except Exception as exc:
             log.warning("startup recovery: %s", exc)
         maint = asyncio.create_task(self.maintenance())
+        media = asyncio.create_task(self.media_loop())
         consumer = asyncio.create_task(self.consume())
         await self.stop.wait()
         consumer.cancel()
@@ -313,6 +364,7 @@ class Worker:
                 task.cancel()
             await asyncio.wait(self.tasks, timeout=10)
         maint.cancel()
+        media.cancel()
         await self.pool.close()
         await self.redis.aclose()
 
