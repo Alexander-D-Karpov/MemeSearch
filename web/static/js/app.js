@@ -92,6 +92,24 @@
     requestAnimationFrame(() => { blurQueued = false; paintBlur(); });
   }).observe(document.body, { childList: true, subtree: true });
 
+  const viewer = $('.viewer[data-bh]');
+  if (viewer) {
+    const clear = () => { viewer.style.backgroundImage = 'none'; };
+    const media = viewer.querySelector('img, video');
+    if (media instanceof HTMLVideoElement) {
+      if (media.readyState >= 2) clear();
+      else media.addEventListener('loadeddata', clear, { once: true });
+      if (media.poster) {
+        const poster = new Image();
+        poster.onload = clear;
+        poster.src = media.poster;
+      }
+    } else if (media) {
+      if (media.complete && media.naturalWidth) clear();
+      else media.addEventListener('load', clear, { once: true });
+    }
+  }
+
   document.querySelectorAll('.viewer img[data-full]').forEach((img) => {
     const full = new Image();
     full.decoding = 'async';
