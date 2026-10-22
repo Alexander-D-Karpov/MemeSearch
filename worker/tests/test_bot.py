@@ -140,3 +140,30 @@ def test_only_admins_in_private_chat_count_as_admin(monkeypatch):
     assert not bot.is_admin(message_from(42, -100123, "supergroup"))
     assert not bot.is_admin(message_from(42, -100456, "group"))
     assert not bot.is_admin(message_from(7, 7, "private"))
+
+
+def test_upload_timeout_grows_with_file_size(monkeypatch, tmp_path):
+    seen = {}
+
+    class Sent:
+        message_id = 1
+        video = type("V", (), {"file_id": "vid"})()
+        animation = None
+
+    class FakeBot:
+        async def send_video(self, chat_id, file, **kw):
+            seen.update(kw)
+            return Sent()
+
+        async def delete_message(self, *a):
+            pass
+
+    monkeypatch.setattr(bot.settings, "upload_dir", tmp_path)
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    m = {"kind": "video", "file_path": "v.mp4", "thumb_path": "", "size_bytes": 14 << 20, "ext": "mp4"}
+    m |= {"width": 0, "height": 0, "duration_ms": 0}
+    assert asyncio.run(bot.upload(FakeBot(), 1, m)) == ("vid", "video")
+    assert seen["request_timeout"] >= 280
+    m["size_bytes"] = 1 << 20
+    asyncio.run(bot.upload(FakeBot(), 1, m))
+    assert seen["request_timeout"] == bot.settings.telegram_upload_timeout
