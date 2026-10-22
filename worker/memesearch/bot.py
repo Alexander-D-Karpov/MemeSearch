@@ -13,7 +13,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
-from aiogram.enums import ParseMode
+from aiogram.enums import ChatType, ParseMode
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
@@ -43,6 +43,7 @@ from .storage import Storage, TooLarge, Unsupported, safe_join
 log = logging.getLogger("memesearch.bot")
 settings = get_settings()
 router = Router()
+router.message.filter(F.chat.type == ChatType.PRIVATE)
 
 NOTIFY_TTL = 6 * 3600
 INLINE_PAGE = 30
@@ -69,7 +70,13 @@ ctx = Ctx()
 
 
 def is_admin(message: Message) -> bool:
-    return message.from_user is not None and message.from_user.id in settings.admin_ids
+    user = message.from_user
+    return (
+        user is not None
+        and message.chat.type == ChatType.PRIVATE
+        and message.chat.id == user.id
+        and user.id in settings.admin_ids
+    )
 
 
 def meme_url(meme_id: int) -> str:
