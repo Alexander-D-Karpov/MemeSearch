@@ -63,7 +63,7 @@ language — ISO 639-1 code of the main text language, or "none" if there is no 
 
 nsfw — true only for nudity, explicit sexual content or graphic gore.
 
-is_meme — true for anything made or shared to be funny or ironic: memes, reaction images, jokes, funny screenshots and videos. False for plain news photos, article or document screenshots, announcements, schedules, polls, product photos and other non-humorous posts.
+is_meme — true for anything made or shared to be funny or ironic: memes, reaction images, jokes, funny screenshots and videos. False for plain news photos, article or document screenshots, announcements, schedules, polls, product photos and other non-humorous posts. Also false for payment and bank transfer receipts, donation notifications, banking or payment app screenshots and money transfer confirmations, even if the transfer comment is funny.
 
 is_ad — true if the image or the caption advertises something: a product, service, shop, course, app, casino or betting, crypto, giveaway, another channel, or contains a promo code, referral link or "реклама"/"erid" label. A meme that merely mentions a brand as part of the joke is not an ad."""
 

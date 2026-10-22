@@ -232,3 +232,13 @@ def test_missing_channel_is_not_a_network_error():
     assert is_network_error(httpx.ReadTimeout("x"))
     assert not is_network_error(ChannelMissing("private"))
     assert not is_network_error(ValueError("x"))
+
+
+def test_round_video_messages_are_ignored():
+    html = """<div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="chan/7">
+    <div class="tgme_widget_message_roundvideo_player"><video src="https://cdn/round.mp4"></video>
+    <time class="tgme_widget_message_roundvideo_duration">0:12</time></div>
+    <a class="tgme_widget_message_video_player" href="https://t.me/chan/7"><video src="https://cdn/clip.mp4"></video>
+    <time class="message_video_duration">0:05</time></a></div></div>"""
+    page = parse_page(html, "chan")
+    assert [m.url for p in page.posts for m in p.media] == ["https://cdn/clip.mp4"]

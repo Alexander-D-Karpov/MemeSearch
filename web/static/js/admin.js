@@ -540,4 +540,78 @@
       });
     });
   }
+
+  const grids = () => $$('.grid').filter((g) => g.querySelector('.card'));
+  if (grids().length) {
+    const bar = document.createElement('div');
+    bar.className = 'select-bar';
+    bar.innerHTML = `<button class="btn select-toggle" type="button">Select</button>
+      <span class="select-tools" hidden><b class="select-count">0 selected</b>
+      <button class="btn danger" type="button" data-sel="delete">Delete</button>
+      <button class="btn" type="button" data-sel="hide">Hide</button>
+      <button class="btn" type="button" data-sel="all">All</button>
+      <button class="btn" type="button" data-sel="clear">Clear</button>
+      <button class="btn btn-primary" type="button" data-sel="done">Done</button></span>`;
+    document.body.append(bar);
+    const toggle = $('.select-toggle', bar);
+    const tools = $('.select-tools', bar);
+    const counter = $('.select-count', bar);
+    let painting = null;
+    const picked = () => $$('.card.picked');
+    const refresh = () => { counter.textContent = `${picked().length} selected`; };
+    const setMode = (on) => {
+      document.body.classList.toggle('selecting', on);
+      toggle.hidden = on;
+      tools.hidden = !on;
+      if (!on) picked().forEach((c) => c.classList.remove('picked'));
+      refresh();
+    };
+    const cardAt = (x, y) => document.elementFromPoint(x, y)?.closest('.grid .card');
+    const paint = (card) => {
+      if (!card || painting === null) return;
+      card.classList.toggle('picked', painting);
+      refresh();
+    };
+    toggle.addEventListener('click', () => setMode(true));
+    document.addEventListener('pointerdown', (e) => {
+      if (!document.body.classList.contains('selecting') || e.button > 0) return;
+      const card = e.target.closest('.grid .card');
+      if (!card) return;
+      painting = !card.classList.contains('picked');
+      paint(card);
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (painting === null) return;
+      paint(cardAt(e.clientX, e.clientY));
+    });
+    const stop = () => { painting = null; };
+    document.addEventListener('pointerup', stop);
+    document.addEventListener('pointercancel', stop);
+    document.addEventListener('click', (e) => {
+      if (document.body.classList.contains('selecting') && e.target.closest('.grid .card')) e.preventDefault();
+    }, true);
+    document.addEventListener('dragstart', (e) => {
+      if (document.body.classList.contains('selecting')) e.preventDefault();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.body.classList.contains('selecting')) setMode(false);
+    });
+    bar.addEventListener('click', async (e) => {
+      const action = e.target.closest('[data-sel]')?.dataset.sel;
+      if (!action) return;
+      if (action === 'done') { setMode(false); return; }
+      if (action === 'clear') { picked().forEach((c) => c.classList.remove('picked')); refresh(); return; }
+      if (action === 'all') { grids().forEach((g) => $$('.card', g).forEach((c) => c.classList.add('picked'))); refresh(); return; }
+      const cards = picked();
+      const ids = cards.map((c) => Number(c.dataset.id)).filter(Boolean);
+      if (!ids.length) { toast('Nothing selected'); return; }
+      if (action === 'delete' && !confirm(`Delete ${ids.length} memes and their files? This cannot be undone.`)) return;
+      try {
+        const data = await api('POST', '/api/v1/admin/memes/bulk', { ids, action });
+        cards.forEach((c) => c.remove());
+        toast(`${action === 'delete' ? 'Deleted' : 'Hidden'}: ${data.affected}`);
+        refresh();
+      } catch (err) { toast(err.message, 5000); }
+    });
+  }
 })();
