@@ -108,9 +108,7 @@ def _post_id(href: str | None, default: int) -> int:
 
 def _media(node: Tag, post_id: int) -> list[MediaItem]:
     items: list[MediaItem] = []
-    for el in node.select(
-        "a.tgme_widget_message_photo_wrap, a.tgme_widget_message_video_player, .tgme_widget_message_roundvideo_player"
-    ):
+    for el in node.select("a.tgme_widget_message_photo_wrap, a.tgme_widget_message_video_player"):
         classes = el.get("class") or []
         item_id = _post_id(el.get("href") or el.get("data-single-url"), post_id)
         if "tgme_widget_message_photo_wrap" in classes:
@@ -119,7 +117,7 @@ def _media(node: Tag, post_id: int) -> list[MediaItem]:
                 items.append(MediaItem(item_id, "photo", m.group(1)))
             continue
         video = el.select_one("video[src]")
-        dur = el.select_one("time.message_video_duration, time.tgme_widget_message_roundvideo_duration")
+        dur = el.select_one("time.message_video_duration")
         duration = parse_duration(dur.get_text()) if dur else None
         if video is None:
             items.append(MediaItem(item_id, "too_big", "", duration))

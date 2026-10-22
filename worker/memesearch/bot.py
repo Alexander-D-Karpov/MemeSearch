@@ -108,9 +108,6 @@ def pick_file(message: Message) -> tuple[str, int, str] | None:
     if message.video:
         v = message.video
         return v.file_id, v.file_size or 0, v.file_name or f"video_{v.file_unique_id}.mp4"
-    if message.video_note:
-        v = message.video_note
-        return v.file_id, v.file_size or 0, f"videonote_{v.file_unique_id}.mp4"
     if message.sticker and not message.sticker.is_animated:
         s = message.sticker
         return s.file_id, s.file_size or 0, f"sticker_{s.file_unique_id}.{'webm' if s.is_video else 'webp'}"
@@ -459,6 +456,9 @@ async def remember(meme_id: int, reply: Message) -> None:
 @router.message(F.photo | F.animation | F.video | F.video_note | F.document | F.sticker)
 async def on_media(message: Message, bot: Bot) -> None:
     if not is_admin(message):
+        return
+    if message.video_note:
+        await message.reply("Round video messages are not accepted. Send it as a regular video if it is a meme.")
         return
     picked = pick_file(message)
     if picked is None:
