@@ -9,6 +9,7 @@ from aiogram.types import (
     InlineQueryResultGif,
     InlineQueryResultPhoto,
     InlineQueryResultVideo,
+    Message,
 )
 
 from memesearch import bot
@@ -120,3 +121,22 @@ def test_network_outage_does_not_mark_memes(monkeypatch):
     with pytest.raises(TelegramNetworkError):
         asyncio.run(bot.cache_one(FlakyBot(False), 1, {"id": 7}))
     assert pool.calls == []
+
+
+def message_from(user_id, chat_id, chat_type):
+    return Message.model_validate(
+        {
+            "message_id": 1,
+            "date": 0,
+            "chat": {"id": chat_id, "type": chat_type},
+            "from": {"id": user_id, "is_bot": False, "first_name": "x"},
+        }
+    )
+
+
+def test_only_admins_in_private_chat_count_as_admin(monkeypatch):
+    monkeypatch.setattr(bot.settings, "telegram_admin_ids", "42")
+    assert bot.is_admin(message_from(42, 42, "private"))
+    assert not bot.is_admin(message_from(42, -100123, "supergroup"))
+    assert not bot.is_admin(message_from(42, -100456, "group"))
+    assert not bot.is_admin(message_from(7, 7, "private"))
