@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     telegram_inline_url_fallback: bool = False
     telegram_cache_chat_id: int | None = None
     telegram_cache_interval: float = 1.2
+    telegram_upload_timeout: int = 180
+    telegram_upload_min_kbps: int = 50
 
     channel_poll_minutes: int = 30
     channel_max_video_seconds: int = 180

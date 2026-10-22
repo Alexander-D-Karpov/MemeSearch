@@ -260,7 +260,8 @@ async def upload(bot: Bot, chat_id: int, m: dict) -> tuple[str, str]:
     src = safe_join(settings.upload_dir, m["file_path"])
     thumb = safe_join(settings.upload_dir, m["thumb_path"]) if m["thumb_path"] else None
     limit = 2000 << 20 if settings.telegram_api_local else UPLOAD_MAX
-    common = {"disable_notification": True}
+    timeout = max(60, settings.telegram_upload_timeout, int(m["size_bytes"] / max(settings.telegram_upload_min_kbps, 1) / 1024))
+    common = {"disable_notification": True, "request_timeout": timeout}
     if m["kind"] == "image":
         path = src if m["ext"] in PHOTO_EXTS and m["size_bytes"] <= PHOTO_UPLOAD_MAX else thumb
         if path is None:
