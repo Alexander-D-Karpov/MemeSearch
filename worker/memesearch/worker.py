@@ -357,7 +357,7 @@ class Worker:
 
     async def transcribe_batch(self) -> float:
         rows = await self.pool.fetch(
-            """SELECT id, file_path FROM memes WHERE kind = 'video' AND status = 'done' AND NOT speech_checked
+            """SELECT id, file_path FROM memes WHERE kind = 'video' AND status = 'done' AND transcript = '' AND NOT speech_checked
             ORDER BY id DESC LIMIT 10"""
         )
         await self.redis.hset(SPEECH_STATS, mapping={"seen_at": int(time.time())})
