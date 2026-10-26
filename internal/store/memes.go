@@ -434,7 +434,7 @@ func (s *Store) MediaStats(ctx context.Context, maxAttempts int) (MediaStats, er
 	if err != nil {
 		return m, err
 	}
-	err = s.Pool.QueryRow(ctx, `SELECT count(*) FROM memes WHERE kind = 'video' AND status = 'done' AND NOT speech_checked`).Scan(&m.Speech)
+	err = s.Pool.QueryRow(ctx, `SELECT count(*) FROM memes WHERE kind = 'video' AND status = 'done' AND transcript = '' AND NOT speech_checked`).Scan(&m.Speech)
 	return m, err
 }
 
