@@ -187,14 +187,25 @@
   const zipForm = $('#zip-form');
   if (zipForm) {
     const zipName = $('#zip-name');
+    const sentKey = (f) => `${f.name}|${f.size}|${f.lastModified}`;
+    const sentArchives = () => { try { return JSON.parse(localStorage.getItem('ms:zips') || '{}'); } catch { return {}; } };
+    const rememberArchive = (f, job) => {
+      try { localStorage.setItem('ms:zips', JSON.stringify({ ...sentArchives(), [sentKey(f)]: job })); } catch { }
+    };
     zipForm.file.addEventListener('change', () => {
       const f = zipForm.file.files[0];
-      zipName.textContent = f ? `${f.name} · ${(f.size / 1048576).toFixed(1)} MB` : 'No archive chosen';
+      zipName.textContent = f
+        ? `${f.name} · ${(f.size / 1048576).toFixed(1)} MB · modified ${new Date(f.lastModified).toLocaleString()}`
+        : 'No archive chosen';
+      zipName.classList.toggle('muted', !f);
     });
     zipForm.addEventListener('submit', (e) => {
       e.preventDefault();
       const file = zipForm.file.files[0];
-      if (!file) return;
+      if (!file) { toast('Choose a .zip archive first'); return; }
+      if (!/\.zip$/i.test(file.name)) { toast(`${file.name} is not a .zip archive`, 5000); return; }
+      const before = sentArchives()[sentKey(file)];
+      if (before && !confirm(`${file.name} (${(file.size / 1048576).toFixed(1)} MB) was already uploaded as import #${before}. Upload it again?`)) return;
       const fd = new FormData();
       fd.append('file', file, file.name);
       const xhr = new XMLHttpRequest();
@@ -217,7 +228,7 @@
         const speed = ev.loaded / Math.max(secs, 0.5);
         const left = speed > 0 ? (ev.total - ev.loaded) / speed : 0;
         bar.style.width = `${pct}%`;
-        summary.textContent = `Sending ${pct}% · ${mb(ev.loaded)} / ${mb(ev.total)} MB · ${mb(speed)} MB/s · ${dur(left)} left`;
+        summary.textContent = `Sending ${file.name} ${pct}% · ${mb(ev.loaded)} / ${mb(ev.total)} MB · ${mb(speed)} MB/s · ${dur(left)} left`;
       };
       xhr.upload.onload = () => {
         sentAt = Date.now();
@@ -234,7 +245,11 @@
         let data = {};
         try { data = JSON.parse(xhr.responseText); } catch { }
         if (xhr.status === 200) {
-          summary.textContent = `Saved on the server (${mb(data.bytes || file.size)} MB) in ${dur((Date.now() - started) / 1000)}. Import job #${data.job_id} is queued; its progress is below.`;
+          summary.textContent = `${file.name} saved on the server (${mb(data.bytes || file.size)} MB) in ${dur((Date.now() - started) / 1000)}. Import job #${data.job_id} is queued; its progress is below.`;
+          rememberArchive(file, data.job_id);
+          zipForm.reset();
+          zipName.textContent = 'No archive chosen';
+          zipName.classList.add('muted');
         } else {
           summary.textContent = `Failed: ${uploadError(xhr, data)}`;
         }
