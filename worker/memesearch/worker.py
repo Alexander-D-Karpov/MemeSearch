@@ -5,8 +5,10 @@ import logging
 import os
 import signal
 import socket
+import tempfile
 import time
 from collections import deque
+from pathlib import Path
 
 import asyncpg
 from redis.asyncio import Redis
@@ -17,7 +19,7 @@ from .config import get_settings
 from .db import connect
 from .fallback import FallbackAnalyzer
 from .importer import Importer
-from .media import repair_media, thumb_hash
+from .media import extract_audio, repair_media, thumb_hash
 from .pipeline import UNREADABLE, MLClient, Pipeline, media_error
 from .rqueue import STREAM_HIGH, STREAM_LOW, JobQueue, Message
 from .storage import Storage, safe_join
@@ -29,6 +31,9 @@ MEDIA_STATS = "ms:media:stats"
 MEDIA_BATCH = 20
 MEDIA_ATTEMPTS = 3
 MEDIA_IDLE_SECONDS = 30
+SPEECH_STATS = "ms:speech:stats"
+SPEECH_IDLE_SECONDS = 60
+SPEECH_ERROR_SECONDS = 600
 
 
 class Worker:
@@ -334,6 +339,69 @@ class Worker:
         pipe.hset(MEDIA_STATS, mapping={"rate": round(len(self.media_done) / 10, 1), "seen_at": int(time.time())})
         await pipe.execute()
 
+    async def speech_loop(self) -> None:
+        while not self.stop.is_set():
+            pause = SPEECH_IDLE_SECONDS
+            try:
+                app = await self.pipeline.app_settings.get()
+                if app.transcribe and self.pipeline.transcriber:
+                    pause = await self.transcribe_batch()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("speech backfill: %s", exc)
+            try:
+                await asyncio.wait_for(self.stop.wait(), timeout=pause)
+            except asyncio.TimeoutError:
+                pass
+
+    async def transcribe_batch(self) -> float:
+        rows = await self.pool.fetch(
+            """SELECT id, file_path FROM memes WHERE kind = 'video' AND status = 'done' AND NOT speech_checked
+            ORDER BY id DESC LIMIT 10"""
+        )
+        await self.redis.hset(SPEECH_STATS, mapping={"seen_at": int(time.time())})
+        if not rows:
+            return SPEECH_IDLE_SECONDS
+        for r in rows:
+            if self.stop.is_set():
+                break
+            if await self.redis.exists(f"ms:lock:meme:{r['id']}"):
+                continue
+            with tempfile.TemporaryDirectory(dir=self.s.work_dir) as d:
+                wav = Path(d) / "audio.wav"
+                try:
+                    extracted = await asyncio.to_thread(
+                        extract_audio, safe_join(self.s.upload_dir, r["file_path"]), wav, self.s.max_transcribe_seconds
+                    )
+                except Exception as exc:
+                    log.info("speech backfill: meme %s has no readable audio: %s", r["id"], exc)
+                    extracted = False
+                if not extracted:
+                    await self.pool.execute("UPDATE memes SET speech_checked = true WHERE id = $1", r["id"])
+                    continue
+                try:
+                    text, _ = await asyncio.to_thread(self.pipeline.transcriber.transcribe, wav)
+                except Exception as exc:
+                    log.warning("speech backfill paused, transcription failed: %s", exc)
+                    await self.redis.hset(SPEECH_STATS, mapping={"last_error": str(exc)[:300]})
+                    return SPEECH_ERROR_SECONDS
+            await self.pool.execute(
+                "UPDATE memes SET transcript = CASE WHEN $2 <> '' THEN $2 ELSE transcript END, speech_checked = true "
+                "WHERE id = $1",
+                r["id"],
+                text,
+            )
+            if text:
+                await self.queue.push(STREAM_LOW, {"type": "process", "id": r["id"], "analyze": False})
+            pipe = self.redis.pipeline(transaction=False)
+            pipe.hincrby(SPEECH_STATS, "done", 1)
+            if text:
+                pipe.hincrby(SPEECH_STATS, "with_speech", 1)
+            pipe.hset(SPEECH_STATS, mapping={"seen_at": int(time.time()), "last_error": ""})
+            await pipe.execute()
+        return 0.5
+
     async def _unlocked(self, ids: list[int], prefix: str) -> list[int]:
         if not ids:
             return []
@@ -352,6 +420,7 @@ class Worker:
             log.warning("startup recovery: %s", exc)
         maint = asyncio.create_task(self.maintenance())
         media = asyncio.create_task(self.media_loop())
+        speech = asyncio.create_task(self.speech_loop())
         consumer = asyncio.create_task(self.consume())
         await self.stop.wait()
         consumer.cancel()
@@ -365,6 +434,7 @@ class Worker:
             await asyncio.wait(self.tasks, timeout=10)
         maint.cancel()
         media.cancel()
+        speech.cancel()
         await self.pool.close()
         await self.redis.aclose()
 

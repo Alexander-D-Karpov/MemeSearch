@@ -6,7 +6,11 @@ from pathlib import Path
 
 from faster_whisper import WhisperModel
 
+from .sounds import read_wav
+
 log = logging.getLogger(__name__)
+
+MAX_SECONDS = 3600
 
 
 class Transcriber:
@@ -31,10 +35,13 @@ class Transcriber:
         return self._model
 
     def transcribe(self, wav: Path) -> tuple[str, str]:
+        audio = read_wav(wav, MAX_SECONDS)
+        if audio.size < 8000:
+            return "", ""
         with self._lock:
             model = self._load()
             segments, info = model.transcribe(
-                str(wav),
+                audio,
                 beam_size=1,
                 vad_filter=True,
                 condition_on_previous_text=False,

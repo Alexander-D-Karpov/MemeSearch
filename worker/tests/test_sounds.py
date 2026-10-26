@@ -10,6 +10,7 @@ from memesearch.pipeline import MLClient, Pipeline
 from memesearch.prompt import build_prompt, embedding_text
 from memesearch.song import song_name
 from memesearch.sounds import SAMPLE_RATE, aggregate, has_music, labels, read_wav, windows
+from memesearch.transcribe import Transcriber
 
 
 def write_wav(path: Path, seconds: float, rate: int = 16000, channels: int = 1) -> None:
@@ -111,3 +112,30 @@ def test_audio_tags_failure_is_not_fatal(tmp_path: Path):
         return await ml.audio_tags(tmp_path / "a.wav")
 
     assert asyncio.run(run()) is None
+
+
+def test_transcriber_feeds_whisper_decoded_audio(tmp_path: Path):
+    wav = tmp_path / "a.wav"
+    with wave.open(str(wav), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes((np.sin(np.arange(32000) / 5) * 8000).astype("<i2").tobytes())
+
+    class Seg:
+        text = " привет мир "
+        no_speech_prob = 0.1
+
+    class Info:
+        language = "ru"
+        language_probability = 0.9
+
+    class Model:
+        def transcribe(self, audio, **kw):
+            Model.got = audio
+            return [Seg()], Info()
+
+    t = Transcriber("small", "int8", 1, tmp_path)
+    t._model = Model()
+    assert t.transcribe(wav) == ("привет мир", "ru")
+    assert isinstance(Model.got, np.ndarray) and Model.got.dtype == np.float32 and Model.got.size == 32000

@@ -419,6 +419,7 @@ type MediaStats struct {
 	Retrying int64
 	Failed   int64
 	Videos   int64
+	Speech   int64
 }
 
 func (s *Store) MediaStats(ctx context.Context, maxAttempts int) (MediaStats, error) {
@@ -430,6 +431,10 @@ func (s *Store) MediaStats(ctx context.Context, maxAttempts int) (MediaStats, er
 		count(*) FILTER (WHERE NOT media_ok AND media_error <> '' AND media_attempts >= $1),
 		count(*) FILTER (WHERE NOT media_ok AND media_error = '' AND kind = 'video')
 		FROM memes WHERE thumb_path <> ''`, maxAttempts).Scan(&m.Total, &m.OK, &m.Todo, &m.Retrying, &m.Failed, &m.Videos)
+	if err != nil {
+		return m, err
+	}
+	err = s.Pool.QueryRow(ctx, `SELECT count(*) FROM memes WHERE kind = 'video' AND status = 'done' AND NOT speech_checked`).Scan(&m.Speech)
 	return m, err
 }
 

@@ -72,6 +72,7 @@
     <dt>Waiting</dt><dd>{{.Todo}}{{if .Videos}} <span class="muted small">incl. {{.Videos}} videos</span>{{end}}</dd>
     <dt>Speed</dt><dd>{{if and .Rate .Todo}}{{printf "%.0f" .Rate}} / min{{with .ETA}} · {{.}}{{end}}{{else}}<span class="muted">—</span>{{end}}</dd>
     <dt>Fixed so far</dt><dd>{{.Regenerated}} thumbnails regenerated · {{.Remuxed}} videos remuxed</dd>
+    <dt>Speech in videos</dt><dd>{{.Speech}} videos left to transcribe <span class="muted small">· {{.SpeechDone}} checked, speech found in {{.SpeechFound}}</span>{{with .SpeechError}}<br><span class="error small">paused: {{.}}</span>{{end}}</dd>
     <dt>Retrying</dt><dd>{{.Retrying}} <span class="muted small">automatic, after 10 min, 30 min, 90 min</span></dd>
     <dt>Failed</dt><dd>{{if .Failed}}<span class="error">{{.Failed}}</span> <span class="muted small">after 3 attempts</span>{{else}}0{{end}}</dd>
   </dl>

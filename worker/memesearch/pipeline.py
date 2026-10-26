@@ -240,9 +240,16 @@ class Pipeline:
                 log.warning("meme %s: could not extract audio: %s", meme_id, exc)
                 extracted = False
             if extracted:
+                heard = None
                 if full and app.transcribe and self.transcriber:
-                    transcript = await self._transcribe(wav) or ""
+                    heard = await self._transcribe(wav)
+                    if heard is not None:
+                        transcript = heard
                 audio = await self._listen(wav)
+                if heard is not None:
+                    audio["speech_checked"] = True
+        elif meme["kind"] == "video" and not prep.has_audio:
+            audio = {"speech_checked": True}
         if full:
             prompt = build_prompt(
                 kind=meme["kind"],
@@ -395,7 +402,7 @@ class Pipeline:
             prep.blurhash,
             media_ok,
         ]
-        for col in ("sounds", "song"):
+        for col in ("sounds", "song", "speech_checked"):
             if audio and col in audio:
                 args.append(audio[col])
                 sets.append(f"{col}=${len(args)}")

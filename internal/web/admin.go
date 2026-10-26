@@ -708,6 +708,7 @@ func (s *Server) writeML(w http.ResponseWriter, out json.RawMessage, err error) 
 
 const (
 	mediaStatsKey    = "ms:media:stats"
+	speechStatsKey   = "ms:speech:stats"
 	mediaMaxAttempts = 3
 )
 
@@ -719,6 +720,9 @@ type MediaProgress struct {
 	Regenerated int64
 	Remuxed     int64
 	LastError   string
+	SpeechDone  int64
+	SpeechFound int64
+	SpeechError string
 	State       string
 	ETA         string
 	Failures    []store.MediaFailure
@@ -737,6 +741,10 @@ func (s *Server) mediaProgress(ctx context.Context) (MediaProgress, error) {
 	num := func(k string) int64 { n, _ := strconv.ParseInt(h[k], 10, 64); return n }
 	p.Rate, _ = strconv.ParseFloat(h["rate"], 64)
 	p.Done, p.Regenerated, p.Remuxed, p.LastError = num("done"), num("regenerated"), num("remuxed"), h["last_error"]
+	sp, _ := s.rdb.HGetAll(ctx, speechStatsKey).Result()
+	p.SpeechDone, _ = strconv.ParseInt(sp["done"], 10, 64)
+	p.SpeechFound, _ = strconv.ParseInt(sp["with_speech"], 10, 64)
+	p.SpeechError = sp["last_error"]
 	seen := num("seen_at")
 	left := p.Todo
 	switch {
