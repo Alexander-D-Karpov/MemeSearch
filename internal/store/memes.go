@@ -391,9 +391,11 @@ func (s *Store) RecentFailures(ctx context.Context, limit int) ([]*Meme, error) 
 }
 
 type TgCache struct {
-	Uploaded int64
-	Waiting  int64
-	Failed   int64
+	Uploaded    int64
+	Waiting     int64
+	Failed      int64
+	Relayed     int64
+	RelayFailed int64
 }
 
 func (s *Store) TgCacheStats(ctx context.Context) (TgCache, error) {
@@ -403,13 +405,22 @@ func (s *Store) TgCacheStats(ctx context.Context) (TgCache, error) {
 		count(*) FILTER (WHERE tg_file_id = '' AND tg_cache_error = ''),
 		count(*) FILTER (WHERE tg_file_id = '' AND tg_cache_error <> '')
 		FROM memes WHERE status = 'done' AND NOT hidden`).Scan(&c.Uploaded, &c.Waiting, &c.Failed)
+	if err != nil {
+		return c, err
+	}
+	err = s.Pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE file_id <> ''), count(*) FILTER (WHERE error <> '')
+		FROM tg_files`).Scan(&c.Relayed, &c.RelayFailed)
 	return c, err
 }
 
 func (s *Store) RetryTgCache(ctx context.Context) (int64, error) {
 	tag, err := s.Pool.Exec(ctx, `UPDATE memes SET tg_cache_error = '', tg_cache_attempts = 0
 		WHERE tg_file_id = '' AND tg_cache_error <> ''`)
-	return tag.RowsAffected(), err
+	if err != nil {
+		return 0, err
+	}
+	relay, err := s.Pool.Exec(ctx, `DELETE FROM tg_files WHERE error <> ''`)
+	return tag.RowsAffected() + relay.RowsAffected(), err
 }
 
 type MediaStats struct {

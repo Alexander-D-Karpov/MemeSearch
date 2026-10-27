@@ -167,3 +167,33 @@ def test_upload_timeout_grows_with_file_size(monkeypatch, tmp_path):
     m["size_bytes"] = 1 << 20
     asyncio.run(bot.upload(FakeBot(), 1, m))
     assert seen["request_timeout"] == bot.settings.telegram_upload_timeout
+
+
+def media_message(message_id: int, **media) -> Message:
+    return Message.model_validate({"message_id": message_id, "date": 0, "chat": {"id": -100, "type": "channel"}, **media})
+
+
+class RelayBot:
+    def __init__(self, id_: int):
+        self.id = id_
+        self.deleted: list[int] = []
+
+    async def send_video(self, chat_id, file_id, **kw):
+        assert file_id == "main-vid"
+        return media_message(10, video={"file_id": "main-vid", "file_unique_id": "u", "width": 1, "height": 1, "duration": 1})
+
+    async def forward_message(self, chat_id, from_chat_id, message_id, **kw):
+        assert message_id == 10
+        return media_message(11, video={"file_id": "relay-vid", "file_unique_id": "u", "width": 1, "height": 1, "duration": 1})
+
+    async def delete_message(self, chat_id, message_id):
+        self.deleted.append(message_id)
+
+
+def test_relay_copies_file_id_without_upload(monkeypatch):
+    pool = CachePool()
+    monkeypatch.setattr(bot.ctx, "pool", pool, raising=False)
+    main, relay = RelayBot(1), RelayBot(2)
+    asyncio.run(bot.relay_one(main, relay, -100, {"id": 7, "tg_file_id": "main-vid", "tg_file_type": "video"}))
+    assert pool.calls[0][1][:5] == (2, 7, "relay-vid", "video", "")
+    assert main.deleted == [10] and relay.deleted == [11]
