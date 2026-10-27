@@ -7,6 +7,7 @@ from PIL import Image
 
 from memesearch.codex import classify, cooldown_from_usage, pause_reason, usage_pause_until
 from memesearch.config import Settings
+from memesearch.dedupe import groups, usable
 from memesearch.media import blurhash, faststart, needs_faststart, repair_media
 from memesearch.prompt import SCHEMA, build_prompt, embedding_text, parse_response
 from memesearch.storage import rel_original, rel_thumb, safe_join, sniff
@@ -194,3 +195,33 @@ def test_repair_media_regenerates_missing_thumb_and_reports_missing_original(tmp
     assert not again.regenerated and again.blurhash == ""
     with pytest.raises(FileNotFoundError, match="original file is missing"):
         repair_media("image", tmp_path / "gone.png", tmp_path / "thumbs" / "x.webp", 480, 6, need_blurhash=True)
+
+
+def _hash(seed: int, flips: int = 0) -> str:
+    bits = list(np.random.default_rng(seed).integers(0, 2, 256))
+    for i in range(flips):
+        bits[i * 7] ^= 1
+    return "".join(str(b) for b in bits)
+
+
+def _row(id_: int, phash: str, **kw) -> dict:
+    return {"id": id_, "video": False, "phash": phash, "locked": False, "hidden": False, "status": "done"} | kw
+
+
+def test_dedupe_groups_near_copies():
+    rows = [
+        _row(5, _hash(1, 3)),
+        _row(2, _hash(1)),
+        _row(9, _hash(1, 10)),
+        _row(3, _hash(2)),
+        _row(4, _hash(1), video=True),
+    ]
+    out = groups(rows, 12)
+    assert out == [{"keeper": 2, "dups": [(5, 3), (9, 10)]}]
+
+
+def test_dedupe_groups_prefers_locked_and_skips_degenerate():
+    flat = "0" * 250 + "1" * 6
+    rows = [_row(1, _hash(1)), _row(7, _hash(1, 2), locked=True), _row(8, flat), _row(9, flat)]
+    assert not usable(flat)
+    assert groups(rows, 12) == [{"keeper": 7, "dups": [(1, 2)]}]

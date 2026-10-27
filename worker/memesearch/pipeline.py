@@ -18,6 +18,7 @@ from redis.asyncio import Redis
 from .codex import CodexFailed, CodexPool, CodexTransient, CodexUnavailable, is_transient
 from .config import Settings
 from .db import SettingsCache, fetch_meme
+from .dedupe import find_near, merge
 from .fallback import FallbackAnalyzer
 from .media import Prepared, extract_audio, faststart, prepare
 from .postfilter import analysis_verdict
@@ -226,6 +227,13 @@ class Pipeline:
             log.warning("meme %s: could not read %s: %s", meme_id, meme["file_path"], exc)
             await self._mark_failed(meme_id, f"could not read the file: {media_error(exc)}")
             return
+        if prep.phash and meme["analyzed_at"] is None and not meme["locked"]:
+            await self.pool.execute("UPDATE memes SET phash = $2::text::bit(256) WHERE id = $1", meme_id, prep.phash)
+            keeper = await find_near(self.pool, meme_id, meme["kind"] == "video", prep.phash, self.s.channel_dedup_distance)
+            if keeper and await merge(self.pool, self.s.upload_dir, keeper, meme_id):
+                log.info("meme %s is a duplicate of %s, merged", meme_id, keeper)
+                await self.queue.event({"type": "meme", "id": meme_id, "status": "duplicate", "of": keeper})
+                return
         fields: dict[str, Any] = {}
         provider, model = meme["provider"], meme["model"]
         app = await self.app_settings.get()

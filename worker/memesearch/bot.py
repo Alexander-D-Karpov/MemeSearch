@@ -513,13 +513,24 @@ async def notifier(bot: Bot) -> None:
                     ev = json.loads(item["data"])
                 except (TypeError, ValueError):
                     continue
-                if ev.get("type") != "meme" or ev.get("status") not in ("done", "failed"):
+                if ev.get("type") != "meme" or ev.get("status") not in ("done", "failed", "duplicate"):
                     continue
                 key = f"ms:bot:notify:{ev['id']}"
                 raw = await ctx.redis.getdel(key)
                 if not raw:
                     continue
                 target = json.loads(raw)
+                if ev["status"] == "duplicate":
+                    keeper = int(ev.get("of") or 0)
+                    title = await ctx.pool.fetchval("SELECT title FROM memes WHERE id=$1", keeper) or ""
+                    text = f'♻️ Already in the base: <a href="{meme_url(keeper)}">#{keeper}</a> <b>{html.escape(title)}</b>'
+                    try:
+                        await bot.edit_message_text(
+                            text, chat_id=target["chat"], message_id=target["msg"], disable_web_page_preview=True
+                        )
+                    except Exception as exc:
+                        log.debug("edit failed: %s", exc)
+                    continue
                 meme = await ctx.pool.fetchrow("SELECT title, ocr_text, tags, error FROM memes WHERE id=$1", ev["id"])
                 if meme is None:
                     continue
