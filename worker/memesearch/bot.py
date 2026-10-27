@@ -55,6 +55,7 @@ PHOTO_UPLOAD_MAX = 10 << 20
 UPLOAD_MAX = 50 << 20
 PHOTO_EXTS = {"jpg", "jpeg", "png", "webp"}
 CACHE_PRIO = "ms:tg:cache:prio"
+RELAY_PRIO = "ms:tg:relay:prio:{}"
 CACHE_ATTEMPTS = 3
 
 
@@ -64,6 +65,7 @@ class Ctx:
     redis: Redis
     pool: object
     http: httpx.AsyncClient
+    primary_id: int = 0
 
 
 ctx = Ctx()
@@ -249,11 +251,22 @@ def inline_result(m: dict, file_id: str = "", file_type: str = ""):
     return None
 
 
-async def file_cache(ids: list[int]) -> dict[int, tuple[str, str]]:
+async def file_cache(bot_id: int, ids: list[int]) -> dict[int, tuple[str, str]]:
     if not ids:
         return {}
-    rows = await ctx.pool.fetch("SELECT id, tg_file_id, tg_file_type FROM memes WHERE id = ANY($1) AND tg_file_id <> ''", ids)
-    return {r["id"]: (r["tg_file_id"], r["tg_file_type"]) for r in rows}
+    if bot_id == ctx.primary_id:
+        rows = await ctx.pool.fetch(
+            "SELECT id, tg_file_id AS file_id, tg_file_type AS file_type FROM memes WHERE id = ANY($1) AND tg_file_id <> ''",
+            ids,
+        )
+    else:
+        rows = await ctx.pool.fetch(
+            """SELECT meme_id AS id, file_id, file_type FROM tg_files
+            WHERE bot_id = $1 AND meme_id = ANY($2) AND file_id <> ''""",
+            bot_id,
+            ids,
+        )
+    return {r["id"]: (r["file_id"], r["file_type"]) for r in rows}
 
 
 async def upload(bot: Bot, chat_id: int, m: dict) -> tuple[str, str]:
@@ -388,8 +401,133 @@ async def cacher(bot: Bot) -> None:
             await asyncio.sleep(15)
 
 
+def media_of(msg: Message) -> tuple[str, str]:
+    if msg.photo:
+        return msg.photo[-1].file_id, "photo"
+    if msg.animation:
+        return msg.animation.file_id, "gif"
+    if msg.video:
+        return msg.video.file_id, "video"
+    raise ValueError("message has no photo, animation or video")
+
+
+async def send_cached(bot: Bot, chat_id: int, file_id: str, file_type: str) -> Message:
+    if file_type == "photo":
+        return await bot.send_photo(chat_id, file_id, disable_notification=True)
+    if file_type == "gif":
+        return await bot.send_animation(chat_id, file_id, disable_notification=True)
+    return await bot.send_video(chat_id, file_id, disable_notification=True)
+
+
+async def save_relay(bot_id: int, meme_id: int, file_id: str, file_type: str, error: str) -> None:
+    if error:
+        log.info("cannot relay meme %s to bot %s: %s", meme_id, bot_id, error)
+    await ctx.pool.execute(
+        """INSERT INTO tg_files (bot_id, meme_id, file_id, file_type, error, attempts)
+        VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 = '' THEN 0 ELSE 1 END)
+        ON CONFLICT (bot_id, meme_id) DO UPDATE SET file_id = EXCLUDED.file_id, file_type = EXCLUDED.file_type,
+            error = EXCLUDED.error, attempts = tg_files.attempts + EXCLUDED.attempts, updated_at = now()""",
+        bot_id,
+        meme_id,
+        file_id,
+        file_type,
+        error[:500],
+    )
+
+
+async def drop(bot: Bot, chat_id: int, msg: Message | None) -> None:
+    if msg is None:
+        return
+    try:
+        await bot.delete_message(chat_id, msg.message_id)
+    except TelegramAPIError:
+        pass
+
+
+async def relay_one(primary: Bot, relay: Bot, chat_id: int, m: dict) -> None:
+    for _ in range(3):
+        sent = fwd = None
+        try:
+            sent = await send_cached(primary, chat_id, m["tg_file_id"], m["tg_file_type"])
+            fwd = await relay.forward_message(chat_id, chat_id, sent.message_id, disable_notification=True)
+            file_id, file_type = media_of(fwd)
+        except TelegramRetryAfter as exc:
+            await asyncio.sleep(exc.retry_after + 1)
+            continue
+        except (TelegramForbiddenError, TelegramNetworkError):
+            raise
+        except (TelegramAPIError, ValueError) as exc:
+            if "chat not found" in str(exc).lower():
+                raise CacheChatUnavailable(str(exc)) from exc
+            await save_relay(relay.id, m["id"], "", "", str(exc) or "error")
+            return
+        finally:
+            await drop(relay, chat_id, fwd)
+            await drop(primary, chat_id, sent)
+        await save_relay(relay.id, m["id"], file_id, file_type, "")
+        return
+
+
+RELAY_COLS = "id, tg_file_id, tg_file_type"
+RELAY_WHERE = """tg_file_id <> '' AND status = 'done' AND NOT hidden
+    AND NOT EXISTS (SELECT 1 FROM tg_files t WHERE t.bot_id = $1 AND t.meme_id = memes.id)"""
+
+
+async def relayer(primary: Bot, relay: Bot) -> None:
+    chat_id = settings.cache_chat_id
+    if not chat_id or chat_id > 0:
+        log.warning(
+            "relay bot %s needs TELEGRAM_CACHE_CHAT_ID set to a channel where both bots are admins; "
+            "its inline results show only memes reachable by link",
+            relay.id,
+        )
+        return
+    prio_key = RELAY_PRIO.format(relay.id)
+    cursor: int | None = None
+    last_retry = 0.0
+    while True:
+        try:
+            if time.monotonic() - last_retry > 600:
+                last_retry = time.monotonic()
+                await ctx.pool.execute(
+                    """DELETE FROM tg_files WHERE bot_id = $1 AND error <> '' AND attempts < $2
+                    AND updated_at < now() - make_interval(hours => attempts)""",
+                    relay.id,
+                    CACHE_ATTEMPTS,
+                )
+            prio = [int(i) for i in await ctx.redis.spop(prio_key, 30) or []]
+            rows = []
+            if prio:
+                rows = await ctx.pool.fetch(
+                    f"SELECT {RELAY_COLS} FROM memes WHERE id = ANY($2) AND {RELAY_WHERE}", relay.id, prio
+                )
+            if not rows:
+                rows = await ctx.pool.fetch(
+                    f"SELECT {RELAY_COLS} FROM memes WHERE id < $2 AND {RELAY_WHERE} ORDER BY id DESC LIMIT 30",
+                    relay.id,
+                    cursor or 1 << 62,
+                )
+                if not rows:
+                    if cursor is None:
+                        await asyncio.sleep(30)
+                    cursor = None
+                    continue
+                cursor = rows[-1]["id"]
+            for m in rows:
+                await relay_one(primary, relay, chat_id, dict(m))
+                await asyncio.sleep(settings.telegram_cache_interval)
+        except asyncio.CancelledError:
+            raise
+        except (TelegramForbiddenError, CacheChatUnavailable) as exc:
+            log.warning("bots cannot use cache chat %s (%s); make both bots admins of the channel", chat_id, exc)
+            await asyncio.sleep(300)
+        except Exception as exc:
+            log.warning("telegram relay: %s", exc)
+            await asyncio.sleep(15)
+
+
 @router.inline_query()
-async def inline_search(query: InlineQuery) -> None:
+async def inline_search(query: InlineQuery, bot: Bot) -> None:
     if not settings.telegram_inline_public and query.from_user.id not in settings.admin_ids:
         await query.answer([], cache_time=300, is_personal=True)
         return
@@ -409,10 +547,12 @@ async def inline_search(query: InlineQuery) -> None:
             log.warning("inline search %r failed: %s", q, exc)
             await query.answer([], cache_time=5, is_personal=True)
             return
-        cache = await file_cache([m["id"] for m in memes])
+        cache = await file_cache(bot.id, [m["id"] for m in memes])
         missing = [m["id"] for m in memes if m["id"] not in cache]
         if missing:
             await ctx.redis.sadd(CACHE_PRIO, *missing)
+            if bot.id != ctx.primary_id:
+                await ctx.redis.sadd(RELAY_PRIO.format(bot.id), *missing)
         for m in memes:
             if len(results) >= INLINE_PAGE:
                 break
@@ -451,7 +591,9 @@ async def cmd_reprocess(message: Message, command: CommandObject) -> None:
 
 
 async def remember(meme_id: int, reply: Message) -> None:
-    await ctx.redis.set(f"ms:bot:notify:{meme_id}", json.dumps({"chat": reply.chat.id, "msg": reply.message_id}), ex=NOTIFY_TTL)
+    bot_id = reply.bot.id if reply.bot else ctx.primary_id
+    payload = {"chat": reply.chat.id, "msg": reply.message_id, "bot": bot_id}
+    await ctx.redis.set(f"ms:bot:notify:{meme_id}", json.dumps(payload), ex=NOTIFY_TTL)
 
 
 @router.message(F.photo | F.animation | F.video | F.video_note | F.document | F.sticker)
@@ -501,7 +643,7 @@ async def on_media(message: Message, bot: Bot) -> None:
     await remember(res.meme_id, reply)
 
 
-async def notifier(bot: Bot) -> None:
+async def notifier(bots: dict[int, Bot]) -> None:
     while True:
         pubsub = ctx.redis.pubsub()
         try:
@@ -520,21 +662,15 @@ async def notifier(bot: Bot) -> None:
                 if not raw:
                     continue
                 target = json.loads(raw)
+                bot = bots.get(target.get("bot")) or bots[ctx.primary_id]
+                meme = await ctx.pool.fetchrow("SELECT title, ocr_text, tags, error FROM memes WHERE id=$1", ev["id"])
                 if ev["status"] == "duplicate":
                     keeper = int(ev.get("of") or 0)
                     title = await ctx.pool.fetchval("SELECT title FROM memes WHERE id=$1", keeper) or ""
                     text = f'♻️ Already in the base: <a href="{meme_url(keeper)}">#{keeper}</a> <b>{html.escape(title)}</b>'
-                    try:
-                        await bot.edit_message_text(
-                            text, chat_id=target["chat"], message_id=target["msg"], disable_web_page_preview=True
-                        )
-                    except Exception as exc:
-                        log.debug("edit failed: %s", exc)
+                elif meme is None:
                     continue
-                meme = await ctx.pool.fetchrow("SELECT title, ocr_text, tags, error FROM memes WHERE id=$1", ev["id"])
-                if meme is None:
-                    continue
-                if ev["status"] == "done":
+                elif ev["status"] == "done":
                     text = f'✅ <a href="{meme_url(ev["id"])}">#{ev["id"]}</a> <b>{html.escape(meme["title"] or "")}</b>'
                     if meme["ocr_text"]:
                         text += f"\n<i>{html.escape(meme['ocr_text'][:300])}</i>"
@@ -557,6 +693,15 @@ async def notifier(bot: Bot) -> None:
             await pubsub.aclose()
 
 
+def make_bot(token: str) -> Bot:
+    session_kwargs = {}
+    if settings.telegram_proxy:
+        session_kwargs["proxy"] = settings.telegram_proxy
+    if settings.telegram_api_url:
+        session_kwargs["api"] = TelegramAPIServer.from_base(settings.telegram_api_url, is_local=settings.telegram_api_local)
+    return Bot(token, session=AiohttpSession(**session_kwargs), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+
+
 async def run() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if not settings.telegram_bot_token:
@@ -570,25 +715,19 @@ async def run() -> None:
     ctx.storage = Storage(settings.upload_dir, ctx.pool, ctx.queue, settings.max_file_mb << 20)
     ctx.http = httpx.AsyncClient(base_url=settings.web_url, timeout=20)
 
-    session_kwargs = {}
-    if settings.telegram_proxy:
-        session_kwargs["proxy"] = settings.telegram_proxy
-    if settings.telegram_api_url:
-        session_kwargs["api"] = TelegramAPIServer.from_base(settings.telegram_api_url, is_local=settings.telegram_api_local)
-    bot = Bot(
-        settings.telegram_bot_token,
-        session=AiohttpSession(**session_kwargs),
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    primary = make_bot(settings.telegram_bot_token)
+    relays = [make_bot(t) for t in settings.relay_bot_tokens]
+    ctx.primary_id = primary.id
+    bots = {b.id: b for b in (primary, *relays)}
     dp = Dispatcher()
     dp.include_router(router)
-    notify = asyncio.create_task(notifier(bot))
-    uploader = asyncio.create_task(cacher(bot))
+    tasks = [asyncio.create_task(notifier(bots)), asyncio.create_task(cacher(primary))]
+    tasks += [asyncio.create_task(relayer(primary, r)) for r in relays]
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        await dp.start_polling(*bots.values(), allowed_updates=dp.resolve_used_update_types())
     finally:
-        notify.cancel()
-        uploader.cancel()
+        for t in tasks:
+            t.cancel()
         await ctx.http.aclose()
         await ctx.pool.close()
 

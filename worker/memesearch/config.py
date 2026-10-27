@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     thumb_size: int = 480
 
     telegram_bot_token: str | None = None
+    telegram_relay_bot_tokens: str = ""
     telegram_admin_ids: str = ""
     telegram_api_url: str | None = None
     telegram_api_local: bool = False
@@ -136,6 +137,10 @@ class Settings(BaseSettings):
     @property
     def admin_ids(self) -> set[int]:
         return {int(x) for x in self.telegram_admin_ids.replace(" ", "").split(",") if x}
+
+    @property
+    def relay_bot_tokens(self) -> list[str]:
+        return [t for t in self.telegram_relay_bot_tokens.replace(" ", "").split(",") if t]
 
     @property
     def cache_chat_id(self) -> int | None:
