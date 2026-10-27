@@ -482,6 +482,19 @@ async def relayer(primary: Bot, relay: Bot) -> None:
             relay.id,
         )
         return
+    try:
+        chat = await primary.get_chat(chat_id)
+    except TelegramAPIError as exc:
+        log.warning("relay bot %s: cannot read cache chat %s: %s", relay.id, chat_id, exc)
+        chat = None
+    if chat is not None and chat.type != ChatType.CHANNEL:
+        log.warning(
+            "relay bot %s: cache chat %s is a %s; bots cannot see each other's messages there, use a channel",
+            relay.id,
+            chat_id,
+            chat.type,
+        )
+        return
     prio_key = RELAY_PRIO.format(relay.id)
     cursor: int | None = None
     last_retry = 0.0
