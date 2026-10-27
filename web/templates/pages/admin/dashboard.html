@@ -92,6 +92,36 @@
   {{end}}
 </section>
 
+<section class="panel">
+  <h2>Duplicates</h2>
+  {{with .Dedupe}}
+  <p class="small muted">Finds memes that look the same (perceptual hash within {{if .Distance}}{{.Distance}}{{else}}12{{end}} of 256 bits), keeps the best copy of each group (edited, visible, analyzed, oldest) and merges the others into it: their sources and captions move over, their files are deleted. New uploads and bot memes are checked automatically before analysis.</p>
+  {{if .State}}
+  <dl class="facts">
+    <dt>State</dt><dd><b>{{.State}}</b>{{if not .Finished.IsZero}} <span class="muted small">· {{ago .Finished}}</span>{{else if not .Started.IsZero}} <span class="muted small">· started {{ago .Started}}</span>{{end}}{{with .Error}} <span class="error small">{{.}}</span>{{end}}</dd>
+    {{if .Scanned}}<dt>Scanned</dt><dd>{{.Scanned}} memes</dd>{{end}}
+    {{if .Groups}}<dt>Found</dt><dd>{{.ToRemove}} duplicates in {{.Groups}} groups</dd>{{end}}
+    {{if .Apply}}<dt>Merged</dt><dd>{{.Merged}} / {{.ToRemove}}</dd>{{end}}
+  </dl>
+  {{end}}
+  <div class="actions">
+    <button class="btn" type="button" data-api="POST /api/v1/admin/dedupe" data-body='{"apply":false}' data-reload>Find duplicates (preview)</button>
+    {{if and (eq .State "preview") .ToRemove}}<button class="btn danger" type="button" data-api="POST /api/v1/admin/dedupe" data-body='{"apply":true}' data-confirm="Merge {{.ToRemove}} duplicates into their originals and delete their files? This cannot be undone." data-reload>Merge {{.ToRemove}} duplicates</button>{{end}}
+  </div>
+  {{if .Samples}}
+  <p class="small muted">Examples, least similar first — check these before merging. Left stays, right is merged into it.</p>
+  <div class="dup-pairs">
+    {{range .Samples}}
+    <div class="dup-pair">
+      <a href="/m/{{.Keeper.ID}}"><img src="{{.Keeper.ThumbURL}}" alt="" loading="lazy"><span>#{{.Keeper.ID}} keep</span></a>
+      <a href="/m/{{.Dup.ID}}"><img src="{{.Dup.ThumbURL}}" alt="" loading="lazy"><span>#{{.Dup.ID}} · {{.Distance}} bits</span></a>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+  {{end}}
+</section>
+
 {{if .Imports}}
 <section class="panel">
   <h2>Recent imports</h2>

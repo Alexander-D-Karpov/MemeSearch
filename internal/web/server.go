@@ -103,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("POST /api/v1/admin/tgcache/retry", admin(http.HandlerFunc(s.apiRetryTgCache)))
 	mux.Handle("POST /api/v1/admin/media/retry", admin(http.HandlerFunc(s.apiRetryMedia)))
+	mux.Handle("POST /api/v1/admin/dedupe", admin(http.HandlerFunc(s.apiDedupe)))
 	mux.Handle("GET /api/v1/admin/channels", admin(http.HandlerFunc(s.apiChannels)))
 	mux.Handle("POST /api/v1/admin/channels", admin(http.HandlerFunc(s.apiChannelCreate)))
 	mux.Handle("PATCH /api/v1/admin/channels/{id}", admin(http.HandlerFunc(s.apiChannelPatch)))

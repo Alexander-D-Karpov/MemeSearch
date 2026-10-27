@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -17,6 +18,7 @@ from .channels import ChannelImporter, claim_due
 from .codex import TRANSIENT_SQL, CodexPool, CodexRuntime
 from .config import get_settings
 from .db import connect
+from .dedupe import groups, merge
 from .fallback import FallbackAnalyzer
 from .importer import Importer
 from .media import extract_audio, repair_media, thumb_hash
@@ -32,6 +34,8 @@ MEDIA_BATCH = 20
 MEDIA_ATTEMPTS = 3
 MEDIA_IDLE_SECONDS = 30
 SPEECH_STATS = "ms:speech:stats"
+DEDUPE_REPORT = "ms:dedupe:report"
+DEDUPE_LOCK = "ms:dedupe:lock"
 SPEECH_IDLE_SECONDS = 60
 SPEECH_ERROR_SECONDS = 600
 
@@ -82,6 +86,8 @@ class Worker:
             kind = msg.job.get("type")
             if kind == "process":
                 await self.pipeline.handle(msg.job)
+            elif kind == "dedupe":
+                await self.dedupe(bool(msg.job.get("apply")))
             elif kind == "import":
                 if self.imports >= 1 or self.background + self.imports >= max(1, self.s.worker_concurrency - 1):
                     await self.pool.execute(
@@ -401,6 +407,61 @@ class Worker:
             pipe.hset(SPEECH_STATS, mapping={"seen_at": int(time.time()), "last_error": ""})
             await pipe.execute()
         return 0.5
+
+    async def dedupe(self, apply: bool) -> None:
+        if not await self.redis.set(DEDUPE_LOCK, "1", nx=True, ex=3600):
+            return
+        started = time.time()
+        try:
+            pipe = self.redis.pipeline()
+            pipe.delete(DEDUPE_REPORT)
+            pipe.hset(DEDUPE_REPORT, mapping={"state": "scanning", "apply": int(apply), "started_at": int(started)})
+            await pipe.execute()
+            rows = await self.pool.fetch(
+                """SELECT id, kind = 'video' AS video, phash::text AS phash, locked, hidden, status
+                FROM memes WHERE phash IS NOT NULL AND status <> 'failed'"""
+            )
+            found = await asyncio.to_thread(groups, [dict(r) for r in rows], self.s.channel_dedup_distance)
+            pairs = [(g["keeper"], d, dist) for g in found for d, dist in g["dups"]]
+            hist: dict[int, int] = {}
+            for _, _, dist in pairs:
+                hist[dist] = hist.get(dist, 0) + 1
+            by_dist = sorted(pairs, key=lambda p: -p[2])
+            samples = by_dist[:20] + pairs[:20]
+            report = {
+                "state": "merging" if apply else "preview",
+                "scanned": len(rows),
+                "groups": len(found),
+                "to_remove": len(pairs),
+                "distance": self.s.channel_dedup_distance,
+                "hist": json.dumps(hist),
+                "samples": json.dumps(list(dict.fromkeys(samples))),
+                "merged": 0,
+            }
+            await self.redis.hset(DEDUPE_REPORT, mapping=report)
+            if apply:
+                merged = 0
+                for n, (keeper, dup, _) in enumerate(pairs, 1):
+                    if self.stop.is_set():
+                        break
+                    if await self.redis.exists(f"ms:lock:meme:{dup}"):
+                        continue
+                    try:
+                        merged += await merge(self.pool, self.s.upload_dir, keeper, dup)
+                    except Exception as exc:
+                        log.warning("dedupe: could not merge %s into %s: %s", dup, keeper, exc)
+                    if n % 50 == 0:
+                        await self.redis.hset(DEDUPE_REPORT, "merged", merged)
+                await self.redis.hset(DEDUPE_REPORT, mapping={"merged": merged, "state": "merged"})
+                if merged:
+                    await self.queue.bump()
+                log.info("dedupe: merged %d duplicates into %d memes", merged, len(found))
+            await self.redis.hset(DEDUPE_REPORT, mapping={"finished_at": int(time.time())})
+        except Exception as exc:
+            log.exception("dedupe failed")
+            await self.redis.hset(DEDUPE_REPORT, mapping={"state": "failed", "error": str(exc)[:300]})
+        finally:
+            await self.redis.delete(DEDUPE_LOCK)
 
     async def _unlocked(self, ids: list[int], prefix: str) -> list[int]:
         if not ids:

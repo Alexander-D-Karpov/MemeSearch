@@ -24,6 +24,7 @@ type Job struct {
 	ID      int64   `json:"id,omitempty"`
 	JobID   int64   `json:"job_id,omitempty"`
 	Analyze bool    `json:"analyze"`
+	Apply   bool    `json:"apply,omitempty"`
 	At      float64 `json:"at,omitempty"`
 }
 

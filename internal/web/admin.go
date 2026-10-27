@@ -52,6 +52,7 @@ type Dashboard struct {
 	TransientFailed int64
 	TgCache         store.TgCache
 	Media           MediaProgress
+	Dedupe          DedupeReport
 	Queue           queue.Lengths
 	Failures        []*store.Meme
 	Imports         []*store.ImportJob
@@ -80,6 +81,7 @@ func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.ETA = eta(d.Stats.ByStatus["pending"]+d.Stats.ByStatus["processing"], d.LastHour)
+	d.Dedupe = s.dedupeReport(ctx)
 	if d.Media, err = s.mediaProgress(ctx); err != nil {
 		storeErr(w, err)
 		return
@@ -762,6 +764,84 @@ func (s *Server) mediaProgress(ctx context.Context) (MediaProgress, error) {
 	}
 	p.Failures, _ = s.store.MediaFailures(ctx, 5)
 	return p, nil
+}
+
+type DedupePair struct {
+	Keeper   *store.Meme
+	Dup      *store.Meme
+	Distance int
+}
+
+type DedupeReport struct {
+	State    string
+	Apply    bool
+	Scanned  int64
+	Groups   int64
+	ToRemove int64
+	Merged   int64
+	Distance int64
+	Error    string
+	Started  time.Time
+	Finished time.Time
+	Samples  []DedupePair
+}
+
+func (s *Server) dedupeReport(ctx context.Context) DedupeReport {
+	h, _ := s.rdb.HGetAll(ctx, "ms:dedupe:report").Result()
+	num := func(k string) int64 { n, _ := strconv.ParseInt(h[k], 10, 64); return n }
+	r := DedupeReport{
+		State: h["state"], Apply: h["apply"] == "1", Scanned: num("scanned"), Groups: num("groups"),
+		ToRemove: num("to_remove"), Merged: num("merged"), Distance: num("distance"), Error: h["error"],
+	}
+	if n := num("started_at"); n > 0 {
+		r.Started = time.Unix(n, 0)
+	}
+	if n := num("finished_at"); n > 0 {
+		r.Finished = time.Unix(n, 0)
+	}
+	var raw [][3]int64
+	if json.Unmarshal([]byte(h["samples"]), &raw) != nil || len(raw) == 0 {
+		return r
+	}
+	ids := make([]int64, 0, len(raw)*2)
+	for _, p := range raw {
+		ids = append(ids, p[0], p[1])
+	}
+	memes, err := s.store.MemesByIDs(ctx, ids)
+	if err != nil {
+		return r
+	}
+	s.decorate(memes...)
+	byID := make(map[int64]*store.Meme, len(memes))
+	for _, m := range memes {
+		byID[m.ID] = m
+	}
+	for _, p := range raw {
+		if k, d := byID[p[0]], byID[p[1]]; k != nil && d != nil {
+			r.Samples = append(r.Samples, DedupePair{Keeper: k, Dup: d, Distance: int(p[2])})
+		}
+	}
+	return r
+}
+
+func (s *Server) apiDedupe(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Apply bool `json:"apply"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if n, _ := s.rdb.Exists(r.Context(), "ms:dedupe:lock").Result(); n > 0 {
+		writeErr(w, http.StatusConflict, errors.New("a duplicate scan is already running"))
+		return
+	}
+	if err := s.queue.Push(r.Context(), queue.StreamHigh, queue.Job{Type: "dedupe", Apply: req.Apply}); err != nil {
+		storeErr(w, err)
+		return
+	}
+	s.rdb.HSet(r.Context(), "ms:dedupe:report", "state", "queued", "apply", map[bool]int{true: 1, false: 0}[req.Apply])
+	writeJSON(w, http.StatusOK, map[string]any{"queued": true})
 }
 
 func (s *Server) apiRetryMedia(w http.ResponseWriter, r *http.Request) {
