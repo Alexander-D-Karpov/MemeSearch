@@ -212,7 +212,7 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	stream := queue.StreamHigh
 	if r.URL.Query().Get("bulk") == "1" {
-		stream = queue.StreamLow
+		stream = queue.StreamMid
 	}
 	var caption string
 	results := []*ingest.Result{}
@@ -767,9 +767,9 @@ func (s *Server) mediaProgress(ctx context.Context) (MediaProgress, error) {
 }
 
 type DedupePair struct {
-	Keeper   *store.Meme
-	Dup      *store.Meme
-	Distance int
+	Keeper *store.Meme
+	Dup    *store.Meme
+	Why    string
 }
 
 type DedupeReport struct {
@@ -778,6 +778,7 @@ type DedupeReport struct {
 	Scanned  int64
 	Groups   int64
 	ToRemove int64
+	Visual   int64
 	Merged   int64
 	Distance int64
 	Error    string
@@ -791,7 +792,7 @@ func (s *Server) dedupeReport(ctx context.Context) DedupeReport {
 	num := func(k string) int64 { n, _ := strconv.ParseInt(h[k], 10, 64); return n }
 	r := DedupeReport{
 		State: h["state"], Apply: h["apply"] == "1", Scanned: num("scanned"), Groups: num("groups"),
-		ToRemove: num("to_remove"), Merged: num("merged"), Distance: num("distance"), Error: h["error"],
+		ToRemove: num("to_remove"), Visual: num("visual"), Merged: num("merged"), Distance: num("distance"), Error: h["error"],
 	}
 	if n := num("started_at"); n > 0 {
 		r.Started = time.Unix(n, 0)
@@ -799,13 +800,17 @@ func (s *Server) dedupeReport(ctx context.Context) DedupeReport {
 	if n := num("finished_at"); n > 0 {
 		r.Finished = time.Unix(n, 0)
 	}
-	var raw [][3]int64
+	var raw []struct {
+		K   int64  `json:"k"`
+		D   int64  `json:"d"`
+		Why string `json:"why"`
+	}
 	if json.Unmarshal([]byte(h["samples"]), &raw) != nil || len(raw) == 0 {
 		return r
 	}
 	ids := make([]int64, 0, len(raw)*2)
 	for _, p := range raw {
-		ids = append(ids, p[0], p[1])
+		ids = append(ids, p.K, p.D)
 	}
 	memes, err := s.store.MemesByIDs(ctx, ids)
 	if err != nil {
@@ -817,8 +822,8 @@ func (s *Server) dedupeReport(ctx context.Context) DedupeReport {
 		byID[m.ID] = m
 	}
 	for _, p := range raw {
-		if k, d := byID[p[0]], byID[p[1]]; k != nil && d != nil {
-			r.Samples = append(r.Samples, DedupePair{Keeper: k, Dup: d, Distance: int(p[2])})
+		if k, d := byID[p.K], byID[p.D]; k != nil && d != nil {
+			r.Samples = append(r.Samples, DedupePair{Keeper: k, Dup: d, Why: p.Why})
 		}
 	}
 	return r

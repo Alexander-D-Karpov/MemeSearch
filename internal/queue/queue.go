@@ -10,10 +10,13 @@ import (
 
 const (
 	StreamHigh   = "ms:q:high"
+	StreamMid    = "ms:q:mid"
 	StreamLow    = "ms:q:low"
 	Delayed      = "ms:q:delayed"
+	DelayedMid   = "ms:q:delayed:mid"
 	DelayedHigh  = "ms:q:delayed:high"
 	WaitCodex    = "ms:q:wait:codex"
+	WaitCodexMid = "ms:q:wait:codex:mid"
 	IndexVersion = "ms:index:ver"
 	Events       = "ms:events"
 	Group        = "workers"
@@ -25,6 +28,7 @@ type Job struct {
 	JobID   int64   `json:"job_id,omitempty"`
 	Analyze bool    `json:"analyze"`
 	Apply   bool    `json:"apply,omitempty"`
+	Lane    string  `json:"lane,omitempty"`
 	At      float64 `json:"at,omitempty"`
 }
 
@@ -40,6 +44,9 @@ func (q *Queue) Push(ctx context.Context, stream string, jobs ...Job) error {
 	for i := range jobs {
 		if jobs[i].At == 0 {
 			jobs[i].At = now
+		}
+		if stream == StreamMid {
+			jobs[i].Lane = "mid"
 		}
 	}
 	for start := 0; start < len(jobs); start += batch {
@@ -87,6 +94,7 @@ func (q *Queue) Version(ctx context.Context) int64 {
 
 type Lengths struct {
 	High      int64 `json:"high"`
+	Mid       int64 `json:"imports"`
 	Low       int64 `json:"low"`
 	Delayed   int64 `json:"delayed"`
 	WaitCodex int64 `json:"waiting_for_codex"`
@@ -95,7 +103,7 @@ type Lengths struct {
 
 func (q *Queue) Lengths(ctx context.Context) Lengths {
 	var l Lengths
-	for _, s := range []string{StreamHigh, StreamLow} {
+	for _, s := range []string{StreamHigh, StreamMid, StreamLow} {
 		n, err := q.R.XLen(ctx, s).Result()
 		if err != nil {
 			continue
@@ -109,17 +117,25 @@ func (q *Queue) Lengths(ctx context.Context) Lengths {
 			}
 		}
 		waiting := max(0, n-pending)
-		if s == StreamHigh {
+		switch s {
+		case StreamHigh:
 			l.High = waiting
-		} else {
+		case StreamMid:
+			l.Mid = waiting
+		default:
 			l.Low = waiting
 		}
 		l.Pending += pending
 	}
-	l.Delayed, _ = q.R.ZCard(ctx, Delayed).Result()
-	if n, err := q.R.ZCard(ctx, DelayedHigh).Result(); err == nil {
-		l.Delayed += n
+	for _, k := range []string{Delayed, DelayedMid, DelayedHigh} {
+		if n, err := q.R.ZCard(ctx, k).Result(); err == nil {
+			l.Delayed += n
+		}
 	}
-	l.WaitCodex, _ = q.R.ZCard(ctx, WaitCodex).Result()
+	for _, k := range []string{WaitCodex, WaitCodexMid} {
+		if n, err := q.R.ZCard(ctx, k).Result(); err == nil {
+			l.WaitCodex += n
+		}
+	}
 	return l
 }
