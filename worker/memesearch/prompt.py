@@ -199,8 +199,9 @@ COMPARE_SCHEMA: dict[str, Any] = {
         "same": {"type": "boolean"},
         "confidence": {"type": "number"},
         "reason": {"type": "string"},
+        "better": {"type": "integer", "enum": [1, 2]},
     },
-    "required": ["same", "confidence", "reason"],
+    "required": ["same", "confidence", "reason", "better"],
     "additionalProperties": False,
 }
 
@@ -210,9 +211,20 @@ COMPARE_SYSTEM = """You check a meme collection for duplicates. You get two imag
 
 "same" is false when anything that makes the joke differs: a different word or line of text, a different caption on the same template, a different punchline, panel, reaction image, person, animal, or moment, a translated version, or one image containing a meme the other does not.
 
-"confidence" is your certainty from 0 to 1. "reason" is one short sentence in English naming the decisive difference or sameness."""
+"confidence" is your certainty from 0 to 1. "reason" is one short sentence in English naming the decisive difference or sameness.
 
-COMPARE_PROMPT = "Are these two images the same meme? The first image is the one that stays in the collection."
+"better" is 1 or 2: which image is the better copy to keep if they are the same meme. Prefer, in this order: no watermark, channel logo, username or added caption bar; nothing cropped off; no extra borders or screenshot interface around the meme; higher resolution and sharpness (use the original sizes given in the request, the images you see may be scaled down); fewer compression artifacts and natural colors. If they are equally good, pick the larger one. Fill it in even when the images are different."""
+
+
+def compare_prompt(first: dict[str, Any], second: dict[str, Any]) -> str:
+    def size(m: dict[str, Any]) -> str:
+        dims = f"{m['width']}×{m['height']} px" if m.get("width") and m.get("height") else "unknown size"
+        return f"{dims}, {max(1, round((m.get('size_bytes') or 0) / 1024))} KB {m.get('ext') or ''}".strip()
+
+    return (
+        "Are these two images the same meme, and which copy is better?\n"
+        f"Image 1 original: {size(first)}.\nImage 2 original: {size(second)}."
+    )
 
 
 def parse_compare(raw: str | None) -> dict[str, Any]:
@@ -225,4 +237,5 @@ def parse_compare(raw: str | None) -> dict[str, Any]:
         "same": data.get("same") is True,
         "confidence": max(0.0, min(1.0, confidence)),
         "reason": str(data.get("reason") or "").strip()[:500],
+        "better": 2 if data.get("better") == 2 else 1,
     }

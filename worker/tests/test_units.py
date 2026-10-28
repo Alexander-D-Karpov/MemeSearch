@@ -9,7 +9,8 @@ from memesearch.codex import classify, cooldown_from_usage, pause_reason, usage_
 from memesearch.config import Settings
 from memesearch.dedupe import Pair, Verdict, Visual, groups, usable
 from memesearch.media import blurhash, faststart, needs_faststart, repair_media
-from memesearch.prompt import SCHEMA, build_prompt, embedding_text, parse_response
+from memesearch.prompt import SCHEMA, build_prompt, compare_prompt, embedding_text, parse_compare, parse_response
+from memesearch.review import choose
 from memesearch.storage import rel_original, rel_thumb, safe_join, sniff
 
 
@@ -262,3 +263,33 @@ JUST = "why is everything a disorder or syndrome maybe im just"
 def test_visual_judge_merges_only_close_pictures_with_the_same_words(sim, a, b, want):
     v = Visual().judge(sim, a, b)
     assert (None if v is None else "sure" if v.sure else "ask") == want
+
+
+def _m(id_: int, locked: bool = False, hidden: bool = False) -> dict:
+    return {"id": id_, "locked": locked, "hidden": hidden}
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "better", "kept"),
+    [
+        (_m(1), _m(2), 2, 2),
+        (_m(1), _m(2), 1, 1),
+        (_m(1, locked=True), _m(2), 2, 1),
+        (_m(1), _m(2, hidden=True), 2, 1),
+        (_m(1, hidden=True), _m(2, hidden=True), 1, 1),
+    ],
+)
+def test_review_keeps_the_better_copy(first, second, better, kept):
+    keep, dup = choose(first, second, better)
+    assert keep["id"] == kept and dup["id"] != kept
+
+
+def test_compare_prompt_and_answer():
+    text = compare_prompt(
+        {"width": 720, "height": 480, "size_bytes": 80 * 1024, "ext": "jpg"},
+        {"width": 0, "height": 0, "size_bytes": 0, "ext": "webp"},
+    )
+    assert "Image 1 original: 720×480 px, 80 KB jpg" in text and "Image 2 original: unknown size" in text
+    got = parse_compare('{"same": true, "confidence": 0.93, "reason": "same frog", "better": 2}')
+    assert got == {"same": True, "confidence": 0.93, "reason": "same frog", "better": 2}
+    assert parse_compare('{"same": false, "confidence": 2, "reason": ""}')["better"] == 1
