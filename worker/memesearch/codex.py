@@ -6,7 +6,7 @@ import logging
 import os
 import shutil
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -332,7 +332,17 @@ class CodexPool:
         ready.sort(key=lambda r: self.inflight.get(r["id"], 0))
         return ready, earliest
 
-    async def analyze(self, prompt: str, images: list[Path], workdir: Path, model: str, effort: str) -> CodexResult:
+    async def analyze(
+        self,
+        prompt: str,
+        images: list[Path],
+        workdir: Path,
+        model: str,
+        effort: str,
+        schema: dict[str, Any] = SCHEMA,
+        system: str = SYSTEM,
+        parse: Callable[[str | None], dict[str, Any]] = parse_response,
+    ) -> CodexResult:
         async with self.sem:
             tried: set[int] = set()
             last_error = "no Codex session is logged in"
@@ -350,7 +360,9 @@ class CodexPool:
                 tried.add(sid)
                 self.inflight[sid] = self.inflight.get(sid, 0) + 1
                 try:
-                    fields, used_model, usage = await self._run(sid, prompt, images, workdir, model, effort)
+                    fields, used_model, usage = await self._run(
+                        sid, prompt, images, workdir, model, effort, schema, system, parse
+                    )
                 except Exception as exc:
                     kind = classify(exc)
                     last_error = f"{sess['name']}: {exc}"[:1000]
@@ -454,13 +466,22 @@ class CodexPool:
         log.info("codex session %s limited until %s", sid, until.isoformat())
 
     async def _run(
-        self, sid: int, prompt: str, images: list[Path], workdir: Path, model: str, effort: str
+        self,
+        sid: int,
+        prompt: str,
+        images: list[Path],
+        workdir: Path,
+        model: str,
+        effort: str,
+        schema: dict[str, Any],
+        system: str,
+        parse: Callable[[str | None], dict[str, Any]],
     ) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
         started = time.monotonic()
         async with self.runtime.session(sid) as codex:
             kwargs: dict[str, Any] = {
                 "approval_mode": ApprovalMode.deny_all,
-                "developer_instructions": SYSTEM,
+                "developer_instructions": system,
                 "ephemeral": True,
                 "cwd": str(workdir),
                 "config": {"web_search": "disabled", "model_reasoning_effort": effort or self.settings.codex_reasoning_effort},
@@ -471,10 +492,10 @@ class CodexPool:
             inputs: list[Any] = [TextInput(text=prompt)]
             inputs += [LocalImageInput(path=str(p)) for p in images]
             result = await asyncio.wait_for(
-                thread.run(inputs, output_schema=SCHEMA, approval_mode=ApprovalMode.deny_all),
+                thread.run(inputs, output_schema=schema, approval_mode=ApprovalMode.deny_all),
                 timeout=self.settings.codex_timeout_seconds,
             )
-            fields = parse_response(result.final_response)
+            fields = parse(result.final_response)
             usage = await self.runtime.rate_limits(codex)
         log.info("codex session %s analyzed in %.1fs", sid, time.monotonic() - started)
         return fields, model or "codex-default", usage

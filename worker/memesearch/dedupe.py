@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+import math
+import re
 from collections import defaultdict
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -75,59 +78,140 @@ async def merge(pool: asyncpg.Pool, upload_dir: Path, keeper_id: int, dup_id: in
     return True
 
 
-VISUAL_SQL = """SELECT a.id AS a, n.id AS b, n.locked, n.sim, n.tsim, a.ocr_text = '' AS a_empty, n.ocr_text = '' AS b_empty
+VISUAL_SQL = """SELECT a.id AS a, n.id AS b, n.locked, n.sim, a.ocr_text AS a_text, n.ocr_text AS b_text
 FROM memes a CROSS JOIN LATERAL (
-    SELECT b.id, b.kind, b.status, b.locked, b.ocr_text, 1 - (b.clip_vec <=> a.clip_vec) AS sim,
-        similarity(lower(b.ocr_text), lower(a.ocr_text)) AS tsim
+    SELECT b.id, b.kind, b.status, b.locked, b.ocr_text, 1 - (b.clip_vec <=> a.clip_vec) AS sim
     FROM memes b WHERE b.clip_vec IS NOT NULL ORDER BY b.clip_vec <=> a.clip_vec LIMIT 12
 ) n
 WHERE a.id = ANY($1) AND a.clip_vec IS NOT NULL AND a.kind <> 'video'
     AND n.id <> a.id AND n.kind = a.kind AND n.status = 'done' AND n.sim >= $2"""
 
+WORD = re.compile(r"\w+")
+
+
+def pct(x: float) -> int:
+    return math.floor(x * 100 + 1e-9)
+
+
+def norm_text(text: str) -> list[str]:
+    return WORD.findall(text.lower())
+
+
+@dataclass(frozen=True)
+class TextDiff:
+    cover: float
+    whole: float
+    replaced: int
+
+
+def text_diff(a: list[str], b: list[str]) -> TextDiff:
+    m = SequenceMatcher(None, a, b, autojunk=False)
+    same = sum(blk.size for blk in m.get_matching_blocks())
+    replaced = sum(max(i2 - i1, j2 - j1) for tag, i1, i2, j1, j2 in m.get_opcodes() if tag == "replace")
+    return TextDiff(same / min(len(a), len(b)), same / max(len(a), len(b)), replaced)
+
+
+@dataclass(frozen=True)
+class Verdict:
+    sure: bool
+    label: str
+    weak: float
+
 
 @dataclass(frozen=True)
 class Visual:
-    min_sim: float
-    no_text_sim: float
-    text_sim: float
+    sure_sim: float = 0.97
+    ask_sim: float = 0.9
+    ask_no_text_sim: float = 0.93
+    same_text: float = 0.9
+    ask_text: float = 0.5
 
-    def threshold(self, a_empty: bool, b_empty: bool) -> float | None:
-        if a_empty and b_empty:
-            return self.no_text_sim
-        if a_empty or b_empty:
-            return None
-        return self.min_sim
+    @property
+    def floor(self) -> float:
+        return min(self.sure_sim, self.ask_sim, self.ask_no_text_sim)
 
-    def match(self, r: Any) -> float | None:
-        need = self.threshold(r["a_empty"], r["b_empty"])
-        if need is None or r["sim"] < need or (not r["a_empty"] and r["tsim"] < self.text_sim):
-            return None
-        return (1 - r["sim"]) / max(1 - need, 1e-6)
+    def weak(self, sim: float) -> float:
+        return (1 - sim) / max(1 - self.sure_sim, 1e-6)
+
+    def judge(self, sim: float, a_text: str, b_text: str) -> Verdict | None:
+        a, b = norm_text(a_text), norm_text(b_text)
+        if not a and not b:
+            label = f"looks {pct(sim)}% alike, no text"
+            if sim >= self.sure_sim:
+                return Verdict(True, label, self.weak(sim))
+            return Verdict(False, label, self.weak(sim)) if sim >= self.ask_no_text_sim else None
+        if not a or not b:
+            return Verdict(False, f"looks {pct(sim)}% alike, text on one only", self.weak(sim)) if sim >= self.sure_sim else None
+        d = text_diff(a, b)
+        label = f"looks {pct(sim)}% alike, text {pct(d.cover)}% shared"
+        if sim >= self.sure_sim and d.cover >= self.same_text and d.replaced <= min(len(a), len(b)) // 15:
+            return Verdict(True, label, self.weak(sim))
+        if sim >= self.ask_sim and d.cover >= self.ask_text:
+            return Verdict(False, label, self.weak(sim))
+        return None
 
 
 def visual_settings(s: Any) -> Visual | None:
     if not s.dedup_visual:
         return None
-    return Visual(s.dedup_visual_min, s.dedup_visual_no_text_min, s.dedup_text_min)
+    return Visual(
+        sure_sim=s.dedup_visual_sure,
+        ask_sim=s.dedup_visual_ask,
+        ask_no_text_sim=s.dedup_visual_ask_no_text,
+        same_text=s.dedup_text_min,
+    )
 
 
-async def visual_pairs(pool: asyncpg.Pool, ids: list[int], v: Visual) -> list[tuple[int, int, str, float]]:
-    rows = await pool.fetch(VISUAL_SQL, ids, min(v.min_sim, v.no_text_sim))
+@dataclass(frozen=True)
+class Pair:
+    a: int
+    b: int
+    sim: float
+    verdict: Verdict
+
+
+async def visual_pairs(pool: asyncpg.Pool, ids: list[int], v: Visual) -> list[Pair]:
     out = []
-    for r in rows:
-        weak = v.match(r)
-        if weak is not None:
-            out.append((r["a"], r["b"], f"looks {r['sim'] * 100:.0f}% alike", weak))
+    for r in await pool.fetch(VISUAL_SQL, ids, v.floor):
+        if verdict := v.judge(r["sim"], r["a_text"], r["b_text"]):
+            out.append(Pair(r["a"], r["b"], r["sim"], verdict))
     return out
 
 
-async def find_visual(pool: asyncpg.Pool, meme_id: int, v: Visual) -> int | None:
-    rows = await pool.fetch(VISUAL_SQL, [meme_id], min(v.min_sim, v.no_text_sim))
-    best = [r for r in rows if (r["b"] < meme_id or r["locked"]) and v.match(r) is not None]
-    return max(best, key=lambda r: r["sim"])["b"] if best else None
+async def find_visual(pool: asyncpg.Pool, meme_id: int, v: Visual) -> tuple[int | None, list[Pair]]:
+    pairs = [p for p in await visual_pairs(pool, [meme_id], v)]
+    sure = [p for p in pairs if p.verdict.sure and p.b < meme_id]
+    keeper = max(sure, key=lambda p: p.sim).b if sure else None
+    return keeper, [p for p in pairs if not p.verdict.sure]
 
 
-def groups(rows: list[dict[str, Any]], distance: int, visual: list[tuple[int, int, str, float]] = ()) -> list[dict[str, Any]]:
+async def save_candidates(pool: asyncpg.Pool, pairs: list[Pair], fresh: bool = False) -> int:
+    best: dict[tuple[int, int], Pair] = {}
+    for p in pairs:
+        key = (min(p.a, p.b), max(p.a, p.b))
+        if key not in best or p.sim > best[key].sim:
+            best[key] = p
+    async with pool.acquire() as conn, conn.transaction():
+        if fresh:
+            await conn.execute("DELETE FROM dedupe_candidates WHERE verdict = ''")
+        if best:
+            await conn.execute(
+                """INSERT INTO dedupe_candidates (a, b, sim, label)
+                SELECT * FROM unnest($1::bigint[], $2::bigint[], $3::real[], $4::text[])
+                ON CONFLICT (a, b) DO NOTHING""",
+                [k[0] for k in best],
+                [k[1] for k in best],
+                [p.sim for p in best.values()],
+                [p.verdict.label for p in best.values()],
+            )
+    return len(best)
+
+
+def keeper_key(r: Any) -> tuple:
+    return (r["locked"] is False, r["hidden"], r["status"] != "done", r["id"])
+
+
+def groups(rows: list[dict[str, Any]], distance: int, visual: list[Pair] = ()) -> list[dict[str, Any]]:
     if not rows:
         return []
     index = {r["id"]: i for i, r in enumerate(rows)}
@@ -165,12 +249,12 @@ def groups(rows: list[dict[str, Any]], distance: int, visual: list[tuple[int, in
                 union(int(m[i]), int(m[j]))
 
     links: dict[tuple[int, int], tuple[str, float]] = {}
-    for a, b, label, weak in visual:
-        if a in index and b in index:
-            ia, ib = index[a], index[b]
+    for p in visual:
+        if p.verdict.sure and p.a in index and p.b in index:
+            ia, ib = index[p.a], index[p.b]
             union(ia, ib)
-            if weak < links.get((ia, ib), ("", 2.0))[1]:
-                links[(ia, ib)] = links[(ib, ia)] = (label, weak)
+            if p.verdict.weak < links.get((ia, ib), ("", 2.0))[1]:
+                links[(ia, ib)] = links[(ib, ia)] = (p.verdict.label, p.verdict.weak)
 
     clusters: dict[int, list[int]] = defaultdict(list)
     for i in range(len(rows)):
@@ -179,7 +263,7 @@ def groups(rows: list[dict[str, Any]], distance: int, visual: list[tuple[int, in
     for members in clusters.values():
         if len(members) < 2:
             continue
-        members.sort(key=lambda i: (rows[i]["locked"] is False, rows[i]["hidden"], rows[i]["status"] != "done", rows[i]["id"]))
+        members.sort(key=lambda i: keeper_key(rows[i]))
         keeper = members[0]
         dups = []
         for i in members[1:]:

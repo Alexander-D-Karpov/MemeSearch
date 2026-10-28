@@ -7,7 +7,7 @@ from PIL import Image
 
 from memesearch.codex import classify, cooldown_from_usage, pause_reason, usage_pause_until
 from memesearch.config import Settings
-from memesearch.dedupe import Visual, groups, usable
+from memesearch.dedupe import Pair, Verdict, Visual, groups, usable
 from memesearch.media import blurhash, faststart, needs_faststart, repair_media
 from memesearch.prompt import SCHEMA, build_prompt, embedding_text, parse_response
 from memesearch.storage import rel_original, rel_thumb, safe_join, sniff
@@ -227,24 +227,38 @@ def test_dedupe_groups_prefers_locked_and_skips_degenerate():
     assert groups(rows, 12) == [{"keeper": 7, "dups": [(1, "2 bits apart", 2 / 12)]}]
 
 
-def test_dedupe_groups_visual_links_only_direct_pairs():
-    rows = [_row(1, _hash(1)), _row(2, _hash(2)), _row(3, _hash(3)), _row(4, None)]
-    edges = [(2, 1, "looks 95% alike", 0.5), (3, 2, "looks 93% alike", 0.7), (4, 1, "looks 97% alike", 0.3)]
-    assert groups(rows, 12, edges) == [{"keeper": 1, "dups": [(2, "looks 95% alike", 0.5), (4, "looks 97% alike", 0.3)]}]
+def test_dedupe_groups_visual_links_only_direct_sure_pairs():
+    rows = [_row(1, _hash(1)), _row(2, _hash(2)), _row(3, _hash(3)), _row(4, None), _row(5, _hash(5))]
+    edges = [
+        Pair(2, 1, 0.98, Verdict(True, "looks 98% alike", 0.5)),
+        Pair(3, 2, 0.97, Verdict(True, "looks 97% alike", 0.9)),
+        Pair(4, 1, 0.99, Verdict(True, "looks 99% alike", 0.3)),
+        Pair(5, 1, 0.93, Verdict(False, "looks 93% alike", 2.0)),
+    ]
+    assert groups(rows, 12, edges) == [{"keeper": 1, "dups": [(2, "looks 98% alike", 0.5), (4, "looks 99% alike", 0.3)]}]
+
+
+JUST = "why is everything a disorder or syndrome maybe im just"
 
 
 @pytest.mark.parametrize(
-    ("sim", "tsim", "a_empty", "b_empty", "hit"),
+    ("sim", "a", "b", "want"),
     [
-        (0.93, 0.8, False, False, True),
-        (0.93, 0.3, False, False, False),
-        (0.88, 0.9, False, False, False),
-        (0.95, 0.0, True, True, False),
-        (0.97, 0.0, True, True, True),
-        (0.99, 0.0, True, False, False),
+        (0.98, JUST + " sexy", JUST + " cool", "ask"),
+        (0.92, JUST + " sexy", JUST + " cool", "ask"),
+        (0.97, JUST + " sexy", JUST + " sexy", "sure"),
+        (0.95, JUST + " sexy", JUST + " sexy", "ask"),
+        (0.98, "скоро буду! да, уже в машине", "Скоро буду!\nДа, уже в машине", "sure"),
+        (0.98, "Elon Musk @elonmusk\nhello world this is a tweet about cats", "hello world this is a tweet about cats", "sure"),
+        (0.95, "совсем другой текст про котов", "a totally different caption", None),
+        (0.89, "same text here", "same text here", None),
+        (0.95, "", "", "ask"),
+        (0.92, "", "", None),
+        (0.98, "", "", "sure"),
+        (0.99, "some text", "", "ask"),
+        (0.95, "some text", "", None),
     ],
 )
-def test_visual_match_needs_matching_text(sim, tsim, a_empty, b_empty, hit):
-    v = Visual(0.9, 0.96, 0.6)
-    row = {"sim": sim, "tsim": tsim, "a_empty": a_empty, "b_empty": b_empty}
-    assert (v.match(row) is not None) is hit
+def test_visual_judge_merges_only_close_pictures_with_the_same_words(sim, a, b, want):
+    v = Visual().judge(sim, a, b)
+    assert (None if v is None else "sure" if v.sure else "ask") == want

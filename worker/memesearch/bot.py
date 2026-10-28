@@ -14,7 +14,13 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ChatType, ParseMode
-from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+)
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     FSInputFile,
@@ -328,12 +334,17 @@ async def telegram_reachable(bot: Bot) -> bool:
         return False
 
 
+async def flood_wait(bot: Bot, chat_id: int, exc: TelegramRetryAfter) -> None:
+    log.info("telegram asks bot %s to wait %ss before writing to %s", bot.id, exc.retry_after, chat_id)
+    await asyncio.sleep(exc.retry_after + 1)
+
+
 async def cache_one(bot: Bot, chat_id: int, m: dict) -> None:
     for _ in range(3):
         try:
             file_id, file_type = await upload(bot, chat_id, m)
         except TelegramRetryAfter as exc:
-            await asyncio.sleep(exc.retry_after + 1)
+            await flood_wait(bot, chat_id, exc)
             continue
         except TelegramForbiddenError:
             raise
@@ -362,7 +373,7 @@ CACHE_WHERE = "tg_file_id = '' AND tg_cache_error = '' AND status = 'done' AND N
 
 
 async def cacher(bot: Bot) -> None:
-    chat_id = settings.cache_chat_id
+    chat_id = settings.upload_chat_id
     if not chat_id:
         log.warning("no TELEGRAM_CACHE_CHAT_ID or admin id: inline results use media links only")
         return
@@ -444,15 +455,26 @@ async def drop(bot: Bot, chat_id: int, msg: Message | None) -> None:
         pass
 
 
-async def relay_one(primary: Bot, relay: Bot, chat_id: int, m: dict) -> None:
+class TargetUnavailable(Exception):
+    pass
+
+
+async def relay_one(primary: Bot, relay: Bot, chat_id: int, m: dict, target: int | None = None) -> None:
+    target = target or chat_id
     for _ in range(3):
         sent = fwd = None
         try:
             sent = await send_cached(primary, chat_id, m["tg_file_id"], m["tg_file_type"])
-            fwd = await relay.forward_message(chat_id, chat_id, sent.message_id, disable_notification=True)
+            try:
+                fwd = await relay.forward_message(target, chat_id, sent.message_id, disable_notification=True)
+            except (TelegramForbiddenError, TelegramBadRequest) as exc:
+                lost = isinstance(exc, TelegramForbiddenError) or "chat not found" in str(exc).lower()
+                if target != chat_id and lost:
+                    raise TargetUnavailable(str(exc)) from exc
+                raise
             file_id, file_type = media_of(fwd)
         except TelegramRetryAfter as exc:
-            await asyncio.sleep(exc.retry_after + 1)
+            await flood_wait(relay if sent else primary, target if sent else chat_id, exc)
             continue
         except (TelegramForbiddenError, TelegramNetworkError):
             raise
@@ -462,7 +484,7 @@ async def relay_one(primary: Bot, relay: Bot, chat_id: int, m: dict) -> None:
             await save_relay(relay.id, m["id"], "", "", str(exc) or "error")
             return
         finally:
-            await drop(relay, chat_id, fwd)
+            await drop(relay, target, fwd)
             await drop(primary, chat_id, sent)
         await save_relay(relay.id, m["id"], file_id, file_type, "")
         return
@@ -496,6 +518,7 @@ async def relayer(primary: Bot, relay: Bot) -> None:
         )
         return
     prio_key = RELAY_PRIO.format(relay.id)
+    target = settings.first_admin or chat_id
     cursor: int | None = None
     last_retry = 0.0
     while True:
@@ -527,7 +550,16 @@ async def relayer(primary: Bot, relay: Bot) -> None:
                     continue
                 cursor = rows[-1]["id"]
             for m in rows:
-                await relay_one(primary, relay, chat_id, dict(m))
+                try:
+                    await relay_one(primary, relay, chat_id, dict(m), target)
+                except TargetUnavailable as exc:
+                    log.warning(
+                        "relay bot %s cannot write to admin %s (%s); send /start to it. Forwarding inside the channel for now",
+                        relay.id,
+                        target,
+                        exc,
+                    )
+                    target = chat_id
                 await asyncio.sleep(settings.telegram_cache_interval)
         except asyncio.CancelledError:
             raise

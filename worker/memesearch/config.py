@@ -89,6 +89,7 @@ class Settings(BaseSettings):
     telegram_inline_public: bool = True
     telegram_inline_url_fallback: bool = False
     telegram_cache_chat_id: int | None = None
+    telegram_upload_chat_id: int | None = None
     telegram_cache_interval: float = 1.2
     telegram_upload_timeout: int = 180
     telegram_upload_min_kbps: int = 50
@@ -98,9 +99,10 @@ class Settings(BaseSettings):
     channel_max_file_mb: int = 100
     channel_dedup_distance: int = 12
     dedup_visual: bool = True
-    dedup_visual_min: float = 0.9
-    dedup_visual_no_text_min: float = 0.96
-    dedup_text_min: float = 0.6
+    dedup_visual_sure: float = 0.97
+    dedup_visual_ask: float = 0.9
+    dedup_visual_ask_no_text: float = 0.93
+    dedup_text_min: float = 0.9
     channel_page_delay: float = 1.5
     channel_history_batch: int = 300
     channel_max_text_chars: int = 700
@@ -123,6 +125,7 @@ class Settings(BaseSettings):
         "telegram_proxy",
         "telegram_web_proxy",
         "telegram_cache_chat_id",
+        "telegram_upload_chat_id",
         "codex_max_weekly_percent",
         mode="before",
     )
@@ -145,6 +148,19 @@ class Settings(BaseSettings):
     @property
     def relay_bot_tokens(self) -> list[str]:
         return [t for t in self.telegram_relay_bot_tokens.replace(" ", "").split(",") if t]
+
+    @property
+    def first_admin(self) -> int | None:
+        ids = [int(x) for x in self.telegram_admin_ids.replace(" ", "").split(",") if x]
+        return ids[0] if ids else None
+
+    @property
+    def upload_chat_id(self) -> int | None:
+        if self.telegram_upload_chat_id:
+            return self.telegram_upload_chat_id
+        if self.relay_bot_tokens and self.first_admin:
+            return self.first_admin
+        return self.cache_chat_id
 
     @property
     def cache_chat_id(self) -> int | None:

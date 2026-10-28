@@ -18,7 +18,7 @@ from redis.asyncio import Redis
 from .codex import CodexFailed, CodexPool, CodexTransient, CodexUnavailable, is_transient
 from .config import Settings
 from .db import SettingsCache, fetch_meme
-from .dedupe import find_near, find_visual, merge, visual_settings
+from .dedupe import find_near, find_visual, merge, save_candidates, visual_settings
 from .fallback import FallbackAnalyzer
 from .media import Prepared, extract_audio, faststart, prepare
 from .postfilter import analysis_verdict
@@ -302,7 +302,9 @@ class Pipeline:
         await self._save(meme_id, prep, thumb_rel, fields, provider, model, clip, text_vec, audio, media_ok)
         visual = visual_settings(self.s)
         if visual and full and meme["analyzed_at"] is None and not meme["locked"] and meme["kind"] != "video":
-            keeper = await find_visual(self.pool, meme_id, visual)
+            keeper, unsure = await find_visual(self.pool, meme_id, visual)
+            if unsure and not keeper:
+                await save_candidates(self.pool, unsure)
             if keeper and await merge(self.pool, self.s.upload_dir, keeper, meme_id):
                 log.info("meme %s looks the same as %s, merged", meme_id, keeper)
                 await self.queue.bump()

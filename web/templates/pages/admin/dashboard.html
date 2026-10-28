@@ -97,13 +97,15 @@
 <section class="panel">
   <h2>Duplicates</h2>
   {{with .Dedupe}}
-  <p class="small muted">Finds memes that look the same: almost identical pixels (perceptual hash within {{if .Distance}}{{.Distance}}{{else}}12{{end}} of 256 bits), or pictures with a very close image embedding and the same text on them (crops, watermarks, re-shot photos; not videos). Keeps the best copy of each group (edited, visible, analyzed, oldest) and merges the others into it: their sources and captions move over, their files are deleted. New uploads and bot memes are checked automatically before analysis.</p>
+  <p class="small muted">Finds memes that look the same: almost identical pixels (perceptual hash within {{if .Distance}}{{.Distance}}{{else}}12{{end}} of 256 bits), or pictures at least 97% alike by image embedding with the same words on them (crops, watermarks; not videos). Less certain look-alikes are not merged here, they go to the Codex check below. Keeps the best copy of each group (edited, visible, analyzed, oldest) and merges the others into it: their sources and captions move over, their files are deleted. New uploads and bot memes are checked automatically before analysis.</p>
   {{if .State}}
   <dl class="facts">
     <dt>State</dt><dd><b>{{.State}}</b>{{if not .Finished.IsZero}} <span class="muted small">· {{ago .Finished}}</span>{{else if not .Started.IsZero}} <span class="muted small">· started {{ago .Started}}</span>{{end}}{{with .Error}} <span class="error small">{{.}}</span>{{end}}</dd>
     {{if .Scanned}}<dt>Scanned</dt><dd>{{.Scanned}} memes</dd>{{end}}
     {{if .Groups}}<dt>Found</dt><dd>{{.ToRemove}} duplicates in {{.Groups}} groups{{if .Visual}} <span class="muted small">· {{.Visual}} found by picture and text</span>{{end}}</dd>{{end}}
+    {{if .VisualBy}}<dt>By picture</dt><dd class="small">{{range $i, $c := .VisualBy}}{{if $i}} · {{end}}{{$c.Percent}}%: {{$c.N}}{{end}}</dd>{{end}}
     {{if .Apply}}<dt>Merged</dt><dd>{{.Merged}} / {{.ToRemove}}</dd>{{end}}
+    {{if .Ask}}<dt>Uncertain</dt><dd>{{.Ask}} look-alike pairs for Codex</dd>{{end}}
   </dl>
   {{end}}
   <div class="actions">
@@ -117,6 +119,42 @@
     <div class="dup-pair">
       <a href="/m/{{.Keeper.ID}}"><img src="{{.Keeper.ThumbURL}}" alt="" loading="lazy"><span>#{{.Keeper.ID}} keep</span></a>
       <a href="/m/{{.Dup.ID}}"><img src="{{.Dup.ThumbURL}}" alt="" loading="lazy"><span>#{{.Dup.ID}} · {{.Why}}</span></a>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+  {{end}}
+
+  {{with .Review}}
+  <h3>Codex check of look-alikes</h3>
+  <p class="small muted">Pairs that look alike (90–97%, or with different words) but are not certain duplicates. Codex looks at both pictures, one request per pair, and only merges when it is sure they are the same meme. Runs only when you press the button; stops by itself when Codex hits its usage limit.</p>
+  <dl class="facts">
+    <dt>Waiting</dt><dd>{{.Todo}} pairs</dd>
+    {{if .State}}<dt>Last run</dt><dd><b>{{.State}}</b>{{if not .Finished.IsZero}} <span class="muted small">· {{ago .Finished}}</span>{{else if not .Started.IsZero}} <span class="muted small">· started {{ago .Started}}</span>{{end}}{{if .Total}} <span class="muted small">· {{.Merged}} merged of {{.Total}}</span>{{end}}</dd>{{end}}
+    {{if or .Different .Same .Errors}}<dt>Decided</dt><dd>{{.Different}} different{{if .Same}} · {{.Same}} same but kept (locked){{end}}{{if .Errors}} · <span class="error">{{.Errors}} errors</span>{{end}}</dd>{{end}}
+  </dl>
+  <div class="actions">
+    {{if .Running}}<button class="btn" type="button" data-api="POST /api/v1/admin/dedupe/review" data-body='{"stop":true}' data-reload>Stop Codex check</button>
+    {{else if .Todo}}<button class="btn" type="button" data-api="POST /api/v1/admin/dedupe/review" data-body='{}' data-confirm="Ask Codex about {{.Todo}} pairs? Each pair is one Codex request." data-reload>Ask Codex about {{.Todo}} pairs</button>{{end}}
+  </div>
+  {{if .NextPairs}}
+  <p class="small muted">Waiting, most and least alike.</p>
+  <div class="dup-pairs">
+    {{range .NextPairs}}
+    <div class="dup-pair">
+      <a href="/m/{{.Keeper.ID}}"><img src="{{.Keeper.ThumbURL}}" alt="" loading="lazy"><span>#{{.Keeper.ID}}</span></a>
+      <a href="/m/{{.Dup.ID}}"><img src="{{.Dup.ThumbURL}}" alt="" loading="lazy"><span>#{{.Dup.ID}} · {{.Label}}</span></a>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+  {{if .RecentPairs}}
+  <p class="small muted">Latest Codex decisions (merged pairs disappear from this list).</p>
+  <div class="dup-pairs">
+    {{range .RecentPairs}}
+    <div class="dup-pair">
+      <a href="/m/{{.Keeper.ID}}"><img src="{{.Keeper.ThumbURL}}" alt="" loading="lazy"><span>#{{.Keeper.ID}}</span></a>
+      <a href="/m/{{.Dup.ID}}"><img src="{{.Dup.ThumbURL}}" alt="" loading="lazy"><span>#{{.Dup.ID}} · <b>{{.Verdict}}</b> {{.Reason}}</span></a>
     </div>
     {{end}}
   </div>

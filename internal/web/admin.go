@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -53,6 +54,7 @@ type Dashboard struct {
 	TgCache         store.TgCache
 	Media           MediaProgress
 	Dedupe          DedupeReport
+	Review          ReviewReport
 	Queue           queue.Lengths
 	Failures        []*store.Meme
 	Imports         []*store.ImportJob
@@ -82,6 +84,7 @@ func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	d.ETA = eta(d.Stats.ByStatus["pending"]+d.Stats.ByStatus["processing"], d.LastHour)
 	d.Dedupe = s.dedupeReport(ctx)
+	d.Review = s.reviewReport(ctx)
 	if d.Media, err = s.mediaProgress(ctx); err != nil {
 		storeErr(w, err)
 		return
@@ -772,6 +775,11 @@ type DedupePair struct {
 	Why    string
 }
 
+type SimCount struct {
+	Percent string
+	N       int64
+}
+
 type DedupeReport struct {
 	State    string
 	Apply    bool
@@ -779,6 +787,8 @@ type DedupeReport struct {
 	Groups   int64
 	ToRemove int64
 	Visual   int64
+	Ask      int64
+	VisualBy []SimCount
 	Merged   int64
 	Distance int64
 	Error    string
@@ -792,13 +802,20 @@ func (s *Server) dedupeReport(ctx context.Context) DedupeReport {
 	num := func(k string) int64 { n, _ := strconv.ParseInt(h[k], 10, 64); return n }
 	r := DedupeReport{
 		State: h["state"], Apply: h["apply"] == "1", Scanned: num("scanned"), Groups: num("groups"),
-		ToRemove: num("to_remove"), Visual: num("visual"), Merged: num("merged"), Distance: num("distance"), Error: h["error"],
+		ToRemove: num("to_remove"), Visual: num("visual"), Ask: num("ask"), Merged: num("merged"), Distance: num("distance"), Error: h["error"],
 	}
 	if n := num("started_at"); n > 0 {
 		r.Started = time.Unix(n, 0)
 	}
 	if n := num("finished_at"); n > 0 {
 		r.Finished = time.Unix(n, 0)
+	}
+	var hist map[string]int64
+	if json.Unmarshal([]byte(h["visual_hist"]), &hist) == nil {
+		for p, n := range hist {
+			r.VisualBy = append(r.VisualBy, SimCount{p, n})
+		}
+		sort.Slice(r.VisualBy, func(i, j int) bool { return r.VisualBy[i].Percent < r.VisualBy[j].Percent })
 	}
 	var raw []struct {
 		K   int64  `json:"k"`
@@ -827,6 +844,98 @@ func (s *Server) dedupeReport(ctx context.Context) DedupeReport {
 		}
 	}
 	return r
+}
+
+type ReviewPair struct {
+	Keeper  *store.Meme
+	Dup     *store.Meme
+	Label   string
+	Verdict string
+	Reason  string
+}
+
+type ReviewReport struct {
+	store.DedupeQueue
+	State       string
+	Running     bool
+	Total       int64
+	Merged      int64
+	Started     time.Time
+	Finished    time.Time
+	NextPairs   []ReviewPair
+	RecentPairs []ReviewPair
+}
+
+func (s *Server) reviewReport(ctx context.Context) ReviewReport {
+	h, _ := s.rdb.HGetAll(ctx, "ms:dedupe:review").Result()
+	num := func(k string) int64 { n, _ := strconv.ParseInt(h[k], 10, 64); return n }
+	r := ReviewReport{State: h["state"], Total: num("total"), Merged: num("merged")}
+	if n, _ := s.rdb.Exists(ctx, "ms:dedupe:review:lock").Result(); n > 0 {
+		r.Running = true
+	}
+	if n := num("started_at"); n > 0 {
+		r.Started = time.Unix(n, 0)
+	}
+	if n := num("finished_at"); n > 0 {
+		r.Finished = time.Unix(n, 0)
+	}
+	q, err := s.store.DedupeQueue(ctx)
+	if err != nil {
+		return r
+	}
+	r.DedupeQueue = q
+	ids := []int64{}
+	for _, c := range append(append([]store.DedupeCandidate{}, q.Next...), q.Recent...) {
+		ids = append(ids, c.A, c.B)
+	}
+	if len(ids) == 0 {
+		return r
+	}
+	memes, err := s.store.MemesByIDs(ctx, ids)
+	if err != nil {
+		return r
+	}
+	s.decorate(memes...)
+	byID := make(map[int64]*store.Meme, len(memes))
+	for _, m := range memes {
+		byID[m.ID] = m
+	}
+	pairs := func(cs []store.DedupeCandidate) []ReviewPair {
+		var out []ReviewPair
+		for _, c := range cs {
+			if a, b := byID[c.A], byID[c.B]; a != nil && b != nil {
+				out = append(out, ReviewPair{Keeper: a, Dup: b, Label: c.Label, Verdict: c.Verdict, Reason: c.Reason})
+			}
+		}
+		return out
+	}
+	r.NextPairs, r.RecentPairs = pairs(q.Next), pairs(q.Recent)
+	return r
+}
+
+func (s *Server) apiDedupeReview(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Stop bool `json:"stop"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Stop {
+		s.rdb.Set(r.Context(), "ms:dedupe:review:stop", "1", time.Hour)
+		writeJSON(w, http.StatusOK, map[string]any{"stopping": true})
+		return
+	}
+	if n, _ := s.rdb.Exists(r.Context(), "ms:dedupe:review:lock").Result(); n > 0 {
+		writeErr(w, http.StatusConflict, errors.New("Codex is already checking duplicates"))
+		return
+	}
+	if err := s.queue.Push(r.Context(), queue.StreamHigh, queue.Job{Type: "dedupe_review"}); err != nil {
+		storeErr(w, err)
+		return
+	}
+	s.rdb.HSet(r.Context(), "ms:dedupe:review", "state", "queued")
+	writeJSON(w, http.StatusOK, map[string]any{"queued": true})
 }
 
 func (s *Server) apiDedupe(w http.ResponseWriter, r *http.Request) {

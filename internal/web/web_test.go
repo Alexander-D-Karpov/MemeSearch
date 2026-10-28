@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/Alexander-D-Karpov/MemeSearch/internal/store"
@@ -131,6 +132,34 @@ func TestMemeChipLinksDecodeToTheTag(t *testing.T) {
 	for v, seen := range want {
 		if !seen {
 			t.Errorf("no search link for %q", v)
+		}
+	}
+}
+
+func TestDashboardRendersDuplicatePanels(t *testing.T) {
+	s := &Server{version: "test"}
+	if err := s.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	a, b := &store.Meme{ID: 1, ThumbURL: "/t/1.webp"}, &store.Meme{ID: 2, ThumbURL: "/t/2.webp"}
+	d := Dashboard{
+		Stats: &store.Stats{},
+		Dedupe: DedupeReport{State: "preview", Groups: 1, ToRemove: 1, Visual: 1, Ask: 3,
+			VisualBy: []SimCount{{"97", 1}}, Samples: []DedupePair{{Keeper: a, Dup: b, Why: "looks 98% alike, no text"}}},
+		Review: ReviewReport{
+			DedupeQueue: store.DedupeQueue{Todo: 3, Different: 2},
+			State:       "paused: limited", Total: 5, Merged: 1,
+			NextPairs:   []ReviewPair{{Keeper: a, Dup: b, Label: "looks 92% alike, text 80% shared"}},
+			RecentPairs: []ReviewPair{{Keeper: a, Dup: b, Verdict: "different", Reason: "0.90 · other word"}},
+		},
+	}
+	var buf bytes.Buffer
+	if err := s.pages["admin/dashboard"].ExecuteTemplate(&buf, "layout", Page{Title: "Admin", Admin: true, Data: d}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Ask Codex about 3 pairs", "looks 92% alike", "other word", "Merge 1 duplicates", "97%: 1"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("dashboard is missing %q", want)
 		}
 	}
 }
