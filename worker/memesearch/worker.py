@@ -164,6 +164,7 @@ class Worker:
         while not self.stop.is_set():
             try:
                 await self.queue.promote_due()
+                await self.queue.flush_bump()
                 if tick % 60 == 59:
                     await self.recover()
                 if tick % 12 == 0:

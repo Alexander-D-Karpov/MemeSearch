@@ -18,6 +18,9 @@ DELAYED_HIGH = "ms:q:delayed:high"
 WAIT_CODEX = "ms:q:wait:codex"
 WAIT_CODEX_MID = "ms:q:wait:codex:mid"
 INDEX_VERSION = "ms:index:ver"
+INDEX_DIRTY = "ms:index:dirty"
+INDEX_GATE = "ms:index:gate"
+BUMP_EVERY = 60
 EVENTS = "ms:events"
 GROUP = "workers"
 
@@ -182,4 +185,14 @@ class JobQueue:
         await self.r.publish(EVENTS, json.dumps(payload))
 
     async def bump(self) -> None:
-        await self.r.incr(INDEX_VERSION)
+        if await self.r.set(INDEX_GATE, "1", nx=True, ex=BUMP_EVERY):
+            await self.r.incr(INDEX_VERSION)
+        else:
+            await self.r.set(INDEX_DIRTY, "1")
+
+    async def flush_bump(self) -> None:
+        if await self.r.exists(INDEX_DIRTY) and await self.r.set(INDEX_GATE, "1", nx=True, ex=BUMP_EVERY):
+            pipe = self.r.pipeline(transaction=False)
+            pipe.delete(INDEX_DIRTY)
+            pipe.incr(INDEX_VERSION)
+            await pipe.execute()

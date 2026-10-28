@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -62,30 +63,52 @@ type Dashboard struct {
 	ML              string
 }
 
+const dashboardTTL = 30 * time.Second
+
+type memo[T any] struct {
+	mu sync.Mutex
+	at time.Time
+	v  T
+}
+
+func (m *memo[T]) get(f func() (T, error)) (T, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.at.IsZero() && time.Since(m.at) < dashboardTTL {
+		return m.v, nil
+	}
+	v, err := f()
+	if err != nil {
+		return v, err
+	}
+	m.v, m.at = v, time.Now()
+	return v, nil
+}
+
 func (s *Server) pageDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d := Dashboard{Queue: s.queue.Lengths(ctx)}
 	var err error
-	if d.Stats, err = s.store.Stats(ctx); err != nil {
+	if d.Stats, err = s.statsMemo.get(func() (*store.Stats, error) { return s.store.Stats(ctx) }); err != nil {
 		storeErr(w, err)
 		return
 	}
-	if d.TransientFailed, err = s.store.CountTransientFailed(ctx); err != nil {
+	if d.TransientFailed, err = s.transientMemo.get(func() (int64, error) { return s.store.CountTransientFailed(ctx) }); err != nil {
 		storeErr(w, err)
 		return
 	}
-	if d.TgCache, err = s.store.TgCacheStats(ctx); err != nil {
+	if d.TgCache, err = s.tgMemo.get(func() (store.TgCache, error) { return s.store.TgCacheStats(ctx) }); err != nil {
 		storeErr(w, err)
 		return
 	}
-	if d.LastHour, err = s.store.AnalyzedSince(ctx, time.Hour); err != nil {
+	if d.LastHour, err = s.hourMemo.get(func() (int64, error) { return s.store.AnalyzedSince(ctx, time.Hour) }); err != nil {
 		storeErr(w, err)
 		return
 	}
 	d.ETA = eta(d.Stats.ByStatus["pending"]+d.Stats.ByStatus["processing"], d.LastHour)
 	d.Dedupe = s.dedupeReport(ctx)
 	d.Review = s.reviewReport(ctx)
-	if d.Media, err = s.mediaProgress(ctx); err != nil {
+	if d.Media, err = s.mediaMemo.get(func() (MediaProgress, error) { return s.mediaProgress(ctx) }); err != nil {
 		storeErr(w, err)
 		return
 	}

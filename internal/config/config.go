@@ -28,6 +28,7 @@ type Config struct {
 	MaxFileBytes      int64
 	MaxZipBytes       int64
 	SearchCacheTTL    time.Duration
+	SimilarWorkers    int
 	EmbedCacheTTL     time.Duration
 	PageSize          int
 	TextMaxDist       float64
@@ -56,6 +57,7 @@ func Load() (*Config, error) {
 		MaxFileBytes:      envInt64("MAX_FILE_MB", 512) << 20,
 		MaxZipBytes:       envInt64("MAX_ZIP_GB", 100) << 30,
 		SearchCacheTTL:    envDuration("SEARCH_CACHE_TTL", 10*time.Minute),
+		SimilarWorkers:    int(envInt64("SIMILAR_WORKERS", 2)),
 		EmbedCacheTTL:     envDuration("EMBED_CACHE_TTL", 30*24*time.Hour),
 		PageSize:          int(envInt64("PAGE_SIZE", 48)),
 		TextMaxDist:       envFloat("SEARCH_TEXT_MAX_DIST", 2),

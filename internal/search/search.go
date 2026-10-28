@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5"
 	"log/slog"
+	"math"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -29,6 +32,10 @@ type Service struct {
 	textMax  float64
 	clipMax  float64
 	lookMax  float64
+
+	totalMu sync.Mutex
+	total   int64
+	totalAt time.Time
 }
 
 func New(s *store.Store, ml *mlclient.Client, rdb *redis.Client, q *queue.Queue, cacheTTL time.Duration, textMax, clipMax, lookMax float64) *Service {
@@ -243,12 +250,13 @@ WITH me AS (
 	SELECT tags, people, lower(template) AS tpl FROM memes WHERE id = $1
 ),
 total AS (
-	SELECT greatest(count(*), 1)::float8 AS n FROM memes WHERE status = 'done' AND NOT hidden
+	SELECT greatest($9::float8, 1) AS n
 ),
 idf AS (
 	SELECT ts.tag, ln((SELECT n FROM total) / ts.n) AS w
 	FROM tag_stats ts, me
 	WHERE ts.tag = ANY(me.tags) AND ts.n > 1 AND ts.n <= (SELECT n FROM total) * $6
+	ORDER BY ts.n LIMIT 12
 ),
 tg AS (
 	SELECT id, row_number() OVER (ORDER BY s DESC, id DESC) AS r FROM (
@@ -295,39 +303,129 @@ SELECT f.id, f.score FROM fused f JOIN memes m ON m.id = f.id
 WHERE f.id <> $1 AND m.status = 'done' AND NOT m.hidden
 ORDER BY f.score DESC LIMIT $5`
 
+const (
+	similarStored  = 36
+	similarRefresh = 14 * 24 * time.Hour
+	totalTTL       = 10 * time.Minute
+)
+
 func (s *Service) Similar(ctx context.Context, id int64, limit int) ([]*store.Meme, error) {
-	key := fmt.Sprintf("ms:similar:%d:%d", id, limit)
 	var ids []int64
-	if raw, err := s.rdb.Get(ctx, key).Bytes(); err == nil && json.Unmarshal(raw, &ids) == nil {
-		return s.visible(ctx, ids)
+	err := s.store.Pool.QueryRow(ctx, "SELECT ids FROM meme_similar WHERE meme_id = $1", id).Scan(&ids)
+	if errors.Is(err, pgx.ErrNoRows) {
+		ids, err = s.computeSimilar(ctx, id)
 	}
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) > limit {
+		ids = ids[:limit]
+	}
+	return s.visible(ctx, ids)
+}
+
+func (s *Service) computeSimilar(ctx context.Context, id int64) ([]int64, error) {
 	clip, text, err := s.store.Vectors(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if clip == nil && text == nil {
-		return nil, nil
+	ids := []int64{}
+	if clip != nil || text != nil {
+		total, err := s.visibleTotal(ctx)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := s.store.Pool.Query(ctx, similarSQL, id, clip, text, similarStored*4, similarStored,
+			similarMaxTagShare, similarSameTemplateDist, s.lookMax, total)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var mid int64
+			var score float64
+			if err := rows.Scan(&mid, &score); err != nil {
+				return nil, err
+			}
+			ids = append(ids, mid)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 	}
-	rows, err := s.store.Pool.Query(ctx, similarSQL, id, clip, text, limit*4, limit, similarMaxTagShare, similarSameTemplateDist, s.lookMax)
+	_, err = s.store.Pool.Exec(ctx, `INSERT INTO meme_similar (meme_id, ids) VALUES ($1, $2)
+		ON CONFLICT (meme_id) DO UPDATE SET ids = EXCLUDED.ids, computed_at = now()`, id, ids)
+	return ids, err
+}
+
+func (s *Service) visibleTotal(ctx context.Context) (int64, error) {
+	s.totalMu.Lock()
+	defer s.totalMu.Unlock()
+	if time.Since(s.totalAt) < totalTTL {
+		return s.total, nil
+	}
+	var n int64
+	if err := s.store.Pool.QueryRow(ctx, "SELECT count(*) FROM memes WHERE status = 'done' AND NOT hidden").Scan(&n); err != nil {
+		return 0, err
+	}
+	s.total, s.totalAt = n, time.Now()
+	return n, nil
+}
+
+func (s *Service) PrecomputeSimilar(ctx context.Context, workers int) {
+	jobs := make(chan int64)
+	for range max(1, workers) {
+		go func() {
+			for id := range jobs {
+				if _, err := s.computeSimilar(ctx, id); err != nil && ctx.Err() == nil {
+					slog.Warn("precompute similar", "id", id, "err", err)
+				}
+			}
+		}()
+	}
+	defer close(jobs)
+	cursor := int64(math.MaxInt64)
+	for ctx.Err() == nil {
+		ids, err := s.similarTodo(ctx, cursor)
+		if err != nil {
+			slog.Warn("precompute similar", "err", err)
+			sleep(ctx, time.Minute)
+			continue
+		}
+		if len(ids) == 0 {
+			if cursor == math.MaxInt64 {
+				sleep(ctx, 10*time.Minute)
+			}
+			cursor = math.MaxInt64
+			continue
+		}
+		for _, id := range ids {
+			select {
+			case jobs <- id:
+			case <-ctx.Done():
+				return
+			}
+			cursor = min(cursor, id)
+		}
+	}
+}
+
+func (s *Service) similarTodo(ctx context.Context, cursor int64) ([]int64, error) {
+	rows, err := s.store.Pool.Query(ctx, `SELECT m.id FROM memes m
+		WHERE m.status = 'done' AND NOT m.hidden AND m.id < $1
+			AND NOT EXISTS (SELECT 1 FROM meme_similar x WHERE x.meme_id = m.id AND x.computed_at > now() - make_interval(secs => $2))
+		ORDER BY m.id DESC LIMIT 200`, cursor, similarRefresh.Seconds())
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var mid int64
-		var score float64
-		if err := rows.Scan(&mid, &score); err != nil {
-			return nil, err
-		}
-		ids = append(ids, mid)
+	return pgx.CollectRows(rows, pgx.RowTo[int64])
+}
+
+func sleep(ctx context.Context, d time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if raw, err := json.Marshal(ids); err == nil {
-		s.rdb.Set(ctx, key, raw, time.Hour)
-	}
-	return s.visible(ctx, ids)
 }
 
 func (s *Service) visible(ctx context.Context, ids []int64) ([]*store.Meme, error) {
