@@ -296,10 +296,10 @@ WHERE f.id <> $1 AND m.status = 'done' AND NOT m.hidden
 ORDER BY f.score DESC LIMIT $5`
 
 func (s *Service) Similar(ctx context.Context, id int64, limit int) ([]*store.Meme, error) {
-	key := fmt.Sprintf("ms:similar:%d:%d:%d", s.q.Version(ctx), id, limit)
+	key := fmt.Sprintf("ms:similar:%d:%d", id, limit)
 	var ids []int64
 	if raw, err := s.rdb.Get(ctx, key).Bytes(); err == nil && json.Unmarshal(raw, &ids) == nil {
-		return s.store.MemesByIDs(ctx, ids)
+		return s.visible(ctx, ids)
 	}
 	clip, text, err := s.store.Vectors(ctx, id)
 	if err != nil {
@@ -327,7 +327,21 @@ func (s *Service) Similar(ctx context.Context, id int64, limit int) ([]*store.Me
 	if raw, err := json.Marshal(ids); err == nil {
 		s.rdb.Set(ctx, key, raw, time.Hour)
 	}
-	return s.store.MemesByIDs(ctx, ids)
+	return s.visible(ctx, ids)
+}
+
+func (s *Service) visible(ctx context.Context, ids []int64) ([]*store.Meme, error) {
+	memes, err := s.store.MemesByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := memes[:0]
+	for _, m := range memes {
+		if m.Status == "done" && !m.Hidden {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
 const lookAlikeSQL = `

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -141,6 +142,12 @@ func (s *Server) visibleMeme(r *http.Request) (*store.Meme, error) {
 	return m, nil
 }
 
+var crawlerUA = regexp.MustCompile(`(?i)bot|crawl|spider|slurp|preview|facebookexternalhit|whatsapp|vkshare|embedly|skypeuri|bitlybot|curl|wget|python-requests|go-http-client|headless`)
+
+func isCrawler(ua string) bool {
+	return ua == "" || crawlerUA.MatchString(ua)
+}
+
 func (s *Server) pageMeme(w http.ResponseWriter, r *http.Request) {
 	m, err := s.visibleMeme(r)
 	if errors.Is(err, store.ErrNotFound) {
@@ -152,11 +159,13 @@ func (s *Server) pageMeme(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	similar, err := s.search.Similar(r.Context(), m.ID, 36)
-	if err != nil {
-		slog.Warn("similar", "err", err)
+	var similar []*store.Meme
+	if !isCrawler(r.UserAgent()) {
+		if similar, err = s.search.Similar(r.Context(), m.ID, 36); err != nil {
+			slog.Warn("similar", "err", err)
+		}
+		s.decorate(similar...)
 	}
-	s.decorate(similar...)
 	sources, err := s.store.MemeSources(r.Context(), m.ID)
 	if err != nil {
 		slog.Warn("sources", "err", err)
