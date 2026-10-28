@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     channel_max_video_seconds: int = 180
     channel_max_file_mb: int = 100
     channel_dedup_distance: int = 12
+    dedup_visual: bool = True
+    dedup_visual_min: float = 0.9
+    dedup_visual_no_text_min: float = 0.96
+    dedup_text_min: float = 0.6
     channel_page_delay: float = 1.5
     channel_history_batch: int = 300
     channel_max_text_chars: int = 700

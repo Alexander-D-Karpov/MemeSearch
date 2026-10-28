@@ -18,12 +18,12 @@ from .channels import ChannelImporter, claim_due
 from .codex import TRANSIENT_SQL, CodexPool, CodexRuntime
 from .config import get_settings
 from .db import connect
-from .dedupe import groups, merge
+from .dedupe import Visual, groups, merge, visual_pairs, visual_settings
 from .fallback import FallbackAnalyzer
 from .importer import Importer
 from .media import extract_audio, repair_media, thumb_hash
 from .pipeline import UNREADABLE, MLClient, Pipeline, media_error
-from .rqueue import STREAM_HIGH, STREAM_LOW, JobQueue, Message
+from .rqueue import STREAM_HIGH, STREAM_LOW, STREAM_MID, JobQueue, Message
 from .storage import Storage, safe_join
 from .transcribe import Transcriber
 
@@ -35,6 +35,7 @@ MEDIA_ATTEMPTS = 3
 MEDIA_IDLE_SECONDS = 30
 SPEECH_STATS = "ms:speech:stats"
 DEDUPE_REPORT = "ms:dedupe:report"
+IMPORT_SOURCES = "('zip', 'inbox', 'upload')"
 DEDUPE_LOCK = "ms:dedupe:lock"
 SPEECH_IDLE_SECONDS = 60
 SPEECH_ERROR_SECONDS = 600
@@ -198,7 +199,7 @@ class Worker:
                 "UPDATE memes SET status='pending', updated_at=now() WHERE id = ANY($1) AND status IN ('processing','pending')",
                 orphans,
             )
-            await self.queue.push(STREAM_LOW, *({"type": "process", "id": i, "analyze": True} for i in orphans))
+            await self.requeue(orphans)
         jobs = await self.pool.fetch(
             "SELECT id FROM import_jobs WHERE status='running' AND started_at < now() - interval '30 minutes'"
         )
@@ -227,7 +228,28 @@ class Worker:
         )
         if rows:
             log.info("retrying %d memes that failed on temporary errors", len(rows))
-            await self.queue.push(STREAM_LOW, *({"type": "process", "id": r["id"], "analyze": True} for r in rows))
+            await self.requeue([r["id"] for r in rows])
+
+    async def imported(self, ids: list[int]) -> set[int]:
+        if not ids:
+            return set()
+        rows = await self.pool.fetch(f"SELECT id FROM memes WHERE id = ANY($1) AND source IN {IMPORT_SOURCES}", ids)
+        return {r["id"] for r in rows}
+
+    async def requeue(self, ids: list[int]) -> None:
+        mid = await self.imported(ids)
+        for stream, chunk in ((STREAM_MID, [i for i in ids if i in mid]), (STREAM_LOW, [i for i in ids if i not in mid])):
+            if chunk:
+                await self.queue.push(stream, *({"type": "process", "id": i, "analyze": True} for i in chunk))
+
+    async def prioritize_imports(self) -> None:
+        try:
+            n = await self.queue.move_to_mid(self.imported)
+        except Exception as exc:
+            log.warning("could not move imported memes ahead of channels: %s", exc)
+            return
+        if n:
+            log.info("moved %d queued imported memes ahead of channel posts", n)
 
     async def wake_codex_waiters(self) -> None:
         if not await self.queue.codex_waiting():
@@ -408,8 +430,31 @@ class Worker:
             await pipe.execute()
         return 0.5
 
+    async def visual_edges(self, visual: Visual) -> list[tuple[int, int, str, float]]:
+        total = await self.pool.fetchval(
+            "SELECT count(*) FROM memes WHERE clip_vec IS NOT NULL AND status = 'done' AND kind <> 'video'"
+        )
+        out: list[tuple[int, int, str, float]] = []
+        cursor, seen = 0, 0
+        while not self.stop.is_set():
+            ids = [
+                r["id"]
+                for r in await self.pool.fetch(
+                    """SELECT id FROM memes WHERE clip_vec IS NOT NULL AND status = 'done' AND kind <> 'video' AND id > $1
+                    ORDER BY id LIMIT 200""",
+                    cursor,
+                )
+            ]
+            if not ids:
+                break
+            cursor = ids[-1]
+            seen += len(ids)
+            out += await visual_pairs(self.pool, ids, visual)
+            await self.redis.hset(DEDUPE_REPORT, mapping={"state": f"comparing pictures {seen}/{total}"})
+        return out
+
     async def dedupe(self, apply: bool) -> None:
-        if not await self.redis.set(DEDUPE_LOCK, "1", nx=True, ex=3600):
+        if not await self.redis.set(DEDUPE_LOCK, "1", nx=True, ex=6 * 3600):
             return
         started = time.time()
         try:
@@ -419,29 +464,28 @@ class Worker:
             await pipe.execute()
             rows = await self.pool.fetch(
                 """SELECT id, kind = 'video' AS video, phash::text AS phash, locked, hidden, status
-                FROM memes WHERE phash IS NOT NULL AND status <> 'failed'"""
+                FROM memes WHERE status <> 'failed'"""
             )
-            found = await asyncio.to_thread(groups, [dict(r) for r in rows], self.s.channel_dedup_distance)
-            pairs = [(g["keeper"], d, dist) for g in found for d, dist in g["dups"]]
-            hist: dict[int, int] = {}
-            for _, _, dist in pairs:
-                hist[dist] = hist.get(dist, 0) + 1
-            by_dist = sorted(pairs, key=lambda p: -p[2])
-            samples = by_dist[:20] + pairs[:20]
+            visual = visual_settings(self.s)
+            edges = await self.visual_edges(visual) if visual else []
+            found = await asyncio.to_thread(groups, [dict(r) for r in rows], self.s.channel_dedup_distance, edges)
+            pairs = [(g["keeper"], d, why, weak) for g in found for d, why, weak in g["dups"]]
+            by_weak = sorted(pairs, key=lambda p: -p[3])
+            samples = list(dict.fromkeys((k, d, why) for k, d, why, _ in by_weak[:24] + pairs[:12]))
             report = {
                 "state": "merging" if apply else "preview",
                 "scanned": len(rows),
                 "groups": len(found),
                 "to_remove": len(pairs),
+                "visual": sum(1 for p in pairs if not p[2].endswith("bits apart")),
                 "distance": self.s.channel_dedup_distance,
-                "hist": json.dumps(hist),
-                "samples": json.dumps(list(dict.fromkeys(samples))),
+                "samples": json.dumps([{"k": k, "d": d, "why": why} for k, d, why in samples]),
                 "merged": 0,
             }
             await self.redis.hset(DEDUPE_REPORT, mapping=report)
             if apply:
                 merged = 0
-                for n, (keeper, dup, _) in enumerate(pairs, 1):
+                for n, (keeper, dup, _, _) in enumerate(pairs, 1):
                     if self.stop.is_set():
                         break
                     if await self.redis.exists(f"ms:lock:meme:{dup}"):
@@ -479,6 +523,7 @@ class Worker:
             await self.recover(startup=True)
         except Exception as exc:
             log.warning("startup recovery: %s", exc)
+        await self.prioritize_imports()
         maint = asyncio.create_task(self.maintenance())
         media = asyncio.create_task(self.media_loop())
         speech = asyncio.create_task(self.speech_loop())

@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 import asyncpg
 from redis.asyncio import Redis
 
-from .rqueue import STREAM_LOW
+from .rqueue import STREAM_MID
 from .storage import Storage, TooLarge, Unsupported
 
 log = logging.getLogger(__name__)
@@ -139,7 +139,7 @@ class Importer:
             c.failed += 1
             return False
         try:
-            res = await self.storage.commit(staged, name=name, source=source, source_ref=source_ref, stream=STREAM_LOW)
+            res = await self.storage.commit(staged, name=name, source=source, source_ref=source_ref, stream=STREAM_MID)
         except Exception as exc:
             log.warning("import %s failed: %s", name, exc)
             c.failed += 1
