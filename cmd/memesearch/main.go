@@ -91,6 +91,9 @@ func run() error {
 	q.Bump(ctx)
 	ml := mlclient.New(cfg.MLURL, cfg.InternalToken, rdb, cfg.EmbedCacheTTL)
 	sr := search.New(st, ml, rdb, q, cfg.SearchCacheTTL, cfg.TextMaxDist, cfg.ClipMaxDist, cfg.LookAlikeMaxDist)
+	if cfg.SimilarWorkers > 0 {
+		go sr.PrecomputeSimilar(ctx, cfg.SimilarWorkers)
+	}
 	a := auth.New(cfg, rdb)
 	in := &ingest.Ingester{Store: st, Queue: q, UploadDir: cfg.UploadDir, MaxBytes: cfg.MaxFileBytes}
 

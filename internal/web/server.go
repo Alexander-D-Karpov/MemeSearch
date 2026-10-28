@@ -36,6 +36,12 @@ type Server struct {
 	ingest  *ingest.Ingester
 	pages   map[string]*template.Template
 	version string
+
+	statsMemo     memo[*store.Stats]
+	transientMemo memo[int64]
+	tgMemo        memo[store.TgCache]
+	hourMemo      memo[int64]
+	mediaMemo     memo[MediaProgress]
 }
 
 func New(cfg *config.Config, st *store.Store, rdb *redis.Client, q *queue.Queue, sr *search.Service,
