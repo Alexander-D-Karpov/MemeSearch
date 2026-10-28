@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from aiogram.exceptions import TelegramNetworkError
+from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError
 from aiogram.types import (
     InlineQueryResultCachedGif,
     InlineQueryResultCachedPhoto,
@@ -197,3 +197,35 @@ def test_relay_copies_file_id_without_upload(monkeypatch):
     asyncio.run(bot.relay_one(main, relay, -100, {"id": 7, "tg_file_id": "main-vid", "tg_file_type": "video"}))
     assert pool.calls[0][1][:5] == (2, 7, "relay-vid", "video", "")
     assert main.deleted == [10] and relay.deleted == [11]
+
+
+def test_relay_forwards_to_private_chat_and_cleans_up(monkeypatch):
+    pool = CachePool()
+    monkeypatch.setattr(bot.ctx, "pool", pool, raising=False)
+    main, relay = RelayBot(1), RelayBot(2)
+    seen = {}
+    original = relay.forward_message
+
+    async def forward(chat_id, from_chat_id, message_id, **kw):
+        seen["to"], seen["from"] = chat_id, from_chat_id
+        return await original(chat_id, from_chat_id, message_id, **kw)
+
+    relay.forward_message = forward
+    asyncio.run(bot.relay_one(main, relay, -100, {"id": 7, "tg_file_id": "main-vid", "tg_file_type": "video"}, 42))
+    assert seen == {"to": 42, "from": -100}
+    assert pool.calls[0][1][2] == "relay-vid"
+
+
+def test_relay_reports_unreachable_private_chat(monkeypatch):
+    pool = CachePool()
+    monkeypatch.setattr(bot.ctx, "pool", pool, raising=False)
+    main, relay = RelayBot(1), RelayBot(2)
+
+    async def forbidden(*a, **kw):
+        raise TelegramForbiddenError(method=None, message="bot can't initiate conversation with a user")
+
+    relay.forward_message = forbidden
+    with pytest.raises(bot.TargetUnavailable):
+        asyncio.run(bot.relay_one(main, relay, -100, {"id": 7, "tg_file_id": "main-vid", "tg_file_type": "video"}, 42))
+    assert main.deleted == [10]
+    assert pool.calls == []

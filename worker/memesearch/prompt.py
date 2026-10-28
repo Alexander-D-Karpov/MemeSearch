@@ -140,7 +140,7 @@ def _clean_list(v: Any, limit: int, lower: bool = False) -> list[str]:
     return out
 
 
-def parse_response(raw: str | None) -> dict[str, Any]:
+def load_json(raw: str | None) -> dict[str, Any]:
     if not raw:
         raise ValueError("empty model response")
     text = raw.strip()
@@ -155,6 +155,11 @@ def parse_response(raw: str | None) -> dict[str, Any]:
     data = json.loads(text)
     if not isinstance(data, dict):
         raise ValueError("model response is not a JSON object")
+    return data
+
+
+def parse_response(raw: str | None) -> dict[str, Any]:
+    data = load_json(raw)
     lang = str(data.get("language") or "").strip().lower()[:8]
     return {
         "title": str(data.get("title") or "").strip()[:300],
@@ -186,3 +191,38 @@ def embedding_text(m: dict[str, Any]) -> str:
         ", ".join(m.get("sounds") or []),
     ]
     return "\n".join(p for p in parts if p)
+
+
+COMPARE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "same": {"type": "boolean"},
+        "confidence": {"type": "number"},
+        "reason": {"type": "string"},
+    },
+    "required": ["same", "confidence", "reason"],
+    "additionalProperties": False,
+}
+
+COMPARE_SYSTEM = """You check a meme collection for duplicates. You get two images and return one JSON object matching the output schema and nothing else.
+
+"same" is true only when both images are the same meme: one is a copy of the other, possibly cropped, resized, recompressed, screenshotted, recolored, with borders, watermarks, usernames, a cut-off header or footer, or a slightly different photo of the same scene with the same text.
+
+"same" is false when anything that makes the joke differs: a different word or line of text, a different caption on the same template, a different punchline, panel, reaction image, person, animal, or moment, a translated version, or one image containing a meme the other does not.
+
+"confidence" is your certainty from 0 to 1. "reason" is one short sentence in English naming the decisive difference or sameness."""
+
+COMPARE_PROMPT = "Are these two images the same meme? The first image is the one that stays in the collection."
+
+
+def parse_compare(raw: str | None) -> dict[str, Any]:
+    data = load_json(raw)
+    try:
+        confidence = float(data.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return {
+        "same": data.get("same") is True,
+        "confidence": max(0.0, min(1.0, confidence)),
+        "reason": str(data.get("reason") or "").strip()[:500],
+    }

@@ -4,11 +4,12 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import socket
 import tempfile
 import time
-from collections import deque
+from collections import Counter, deque
 from pathlib import Path
 
 import asyncpg
@@ -18,11 +19,12 @@ from .channels import ChannelImporter, claim_due
 from .codex import TRANSIENT_SQL, CodexPool, CodexRuntime
 from .config import get_settings
 from .db import connect
-from .dedupe import Visual, groups, merge, visual_pairs, visual_settings
+from .dedupe import Pair, Visual, groups, merge, save_candidates, visual_pairs, visual_settings
 from .fallback import FallbackAnalyzer
 from .importer import Importer
 from .media import extract_audio, repair_media, thumb_hash
 from .pipeline import UNREADABLE, MLClient, Pipeline, media_error
+from .review import Reviewer
 from .rqueue import STREAM_HIGH, STREAM_LOW, STREAM_MID, JobQueue, Message
 from .storage import Storage, safe_join
 from .transcribe import Transcriber
@@ -35,6 +37,7 @@ MEDIA_ATTEMPTS = 3
 MEDIA_IDLE_SECONDS = 30
 SPEECH_STATS = "ms:speech:stats"
 DEDUPE_REPORT = "ms:dedupe:report"
+LOOKS = re.compile(r"looks (\d+)%")
 IMPORT_SOURCES = "('zip', 'inbox', 'upload')"
 DEDUPE_LOCK = "ms:dedupe:lock"
 SPEECH_IDLE_SECONDS = 60
@@ -74,6 +77,8 @@ class Worker:
         storage = Storage(self.s.upload_dir, self.pool, self.queue, self.s.max_file_mb << 20)
         self.importer = Importer(self.pool, storage, self.redis)
         self.channels = ChannelImporter(self.s, self.pool, storage, self.redis)
+        self.reviewer = Reviewer(self.s, self.pool, self.redis, self.pipeline.codex, self.pipeline.app_settings, self.queue.bump)
+        self.review_task: asyncio.Task | None = None
         self.active = 0
         self.background = 0
         self.phash_cursor = 0
@@ -89,6 +94,9 @@ class Worker:
                 await self.pipeline.handle(msg.job)
             elif kind == "dedupe":
                 await self.dedupe(bool(msg.job.get("apply")))
+            elif kind == "dedupe_review":
+                if self.review_task is None or self.review_task.done():
+                    self.review_task = asyncio.create_task(self.reviewer.run())
             elif kind == "import":
                 if self.imports >= 1 or self.background + self.imports >= max(1, self.s.worker_concurrency - 1):
                     await self.pool.execute(
@@ -430,11 +438,11 @@ class Worker:
             await pipe.execute()
         return 0.5
 
-    async def visual_edges(self, visual: Visual) -> list[tuple[int, int, str, float]]:
+    async def visual_edges(self, visual: Visual) -> list[Pair]:
         total = await self.pool.fetchval(
             "SELECT count(*) FROM memes WHERE clip_vec IS NOT NULL AND status = 'done' AND kind <> 'video'"
         )
-        out: list[tuple[int, int, str, float]] = []
+        out: list[Pair] = []
         cursor, seen = 0, 0
         while not self.stop.is_set():
             ids = [
@@ -468,6 +476,7 @@ class Worker:
             )
             visual = visual_settings(self.s)
             edges = await self.visual_edges(visual) if visual else []
+            asks = await save_candidates(self.pool, [p for p in edges if not p.verdict.sure], fresh=True)
             found = await asyncio.to_thread(groups, [dict(r) for r in rows], self.s.channel_dedup_distance, edges)
             pairs = [(g["keeper"], d, why, weak) for g in found for d, why, weak in g["dups"]]
             by_weak = sorted(pairs, key=lambda p: -p[3])
@@ -478,6 +487,8 @@ class Worker:
                 "groups": len(found),
                 "to_remove": len(pairs),
                 "visual": sum(1 for p in pairs if not p[2].endswith("bits apart")),
+                "ask": asks,
+                "visual_hist": json.dumps(dict(sorted(Counter(m[1] for p in pairs if (m := LOOKS.match(p[2]))).items()))),
                 "distance": self.s.channel_dedup_distance,
                 "samples": json.dumps([{"k": k, "d": d, "why": why} for k, d, why in samples]),
                 "merged": 0,
@@ -538,6 +549,8 @@ class Worker:
             for task in self.tasks:
                 task.cancel()
             await asyncio.wait(self.tasks, timeout=10)
+        if self.review_task is not None:
+            self.review_task.cancel()
         maint.cancel()
         media.cancel()
         speech.cancel()

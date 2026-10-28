@@ -485,3 +485,53 @@ func (s *Store) AnalyzedSince(ctx context.Context, d time.Duration) (int64, erro
 	err := s.Pool.QueryRow(ctx, "SELECT count(*) FROM memes WHERE analyzed_at > now() - make_interval(secs => $1)", d.Seconds()).Scan(&n)
 	return n, err
 }
+
+type DedupeCandidate struct {
+	A, B    int64
+	Sim     float32
+	Label   string
+	Verdict string
+	Reason  string
+}
+
+type DedupeQueue struct {
+	Todo      int64
+	Different int64
+	Same      int64
+	Errors    int64
+	Next      []DedupeCandidate
+	Recent    []DedupeCandidate
+}
+
+func (s *Store) DedupeQueue(ctx context.Context) (DedupeQueue, error) {
+	var q DedupeQueue
+	err := s.Pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE verdict = ''), count(*) FILTER (WHERE verdict = 'different'),
+		count(*) FILTER (WHERE verdict = 'same'), count(*) FILTER (WHERE verdict = 'error') FROM dedupe_candidates`).
+		Scan(&q.Todo, &q.Different, &q.Same, &q.Errors)
+	if err != nil {
+		return q, err
+	}
+	scan := func(sql string) ([]DedupeCandidate, error) {
+		rows, err := s.Pool.Query(ctx, sql)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out []DedupeCandidate
+		for rows.Next() {
+			var c DedupeCandidate
+			if err := rows.Scan(&c.A, &c.B, &c.Sim, &c.Label, &c.Verdict, &c.Reason); err != nil {
+				return nil, err
+			}
+			out = append(out, c)
+		}
+		return out, rows.Err()
+	}
+	if q.Next, err = scan(`(SELECT a, b, sim, label, verdict, reason FROM dedupe_candidates WHERE verdict = '' ORDER BY sim DESC LIMIT 6)
+		UNION ALL (SELECT a, b, sim, label, verdict, reason FROM dedupe_candidates WHERE verdict = '' ORDER BY sim LIMIT 6)`); err != nil {
+		return q, err
+	}
+	q.Recent, err = scan(`SELECT a, b, sim, label, verdict, reason FROM dedupe_candidates
+		WHERE verdict <> '' ORDER BY checked_at DESC NULLS LAST LIMIT 12`)
+	return q, err
+}
